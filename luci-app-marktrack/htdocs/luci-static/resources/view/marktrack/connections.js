@@ -51,6 +51,28 @@ var convertToKbps = function(bytesPerSecond) {
     return (bytesPerSecond * 8 / 1000).toFixed(2) + ' Kbit/s';
 };
 
+// In-page section navigation (avoids relying on the top menu bar)
+function renderSectionNav(active) {
+    var items = [
+        ['rules',        _('DSCP Rules')],
+        ['ipsets',       _('IP Sets')],
+        ['custom_rules', _('Custom Rules')],
+        ['connections',  _('Connections')]
+    ];
+    return E('div', { 'class': 'marktrack-nav', 'style': 'margin:0 0 1em 0; display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid rgba(128,128,128,0.25); padding-bottom:6px;' },
+        items.map(function(it) {
+            var isActive = (it[0] === active);
+            return E('a', {
+                'href': L.url('admin/marktrack', it[0]),
+                'style': 'display:inline-block; padding:6px 14px; border-radius:6px; text-decoration:none; font-size:0.95em; '
+                    + (isActive
+                        ? 'background:#0a84ff; color:#fff; font-weight:600;'
+                        : 'background:rgba(128,128,128,0.14); color:inherit;')
+            }, it[1]);
+        })
+    );
+}
+
 return view.extend({
     pollInterval: 1,
     lastData: {},
@@ -465,6 +487,7 @@ return view.extend({
         // Include limit elements in the top container
         return E('div', { 'class': 'cbi-map' }, [
             style,
+            renderSectionNav('connections'),
             E('h2', _('Mark and Track — Connections')),
             limitWarning,
             E('div', { 'style': 'margin-bottom: 10px;' }, [

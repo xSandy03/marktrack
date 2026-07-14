@@ -29,6 +29,7 @@
 10. [Change Impact Reference](#10-change-impact-reference)
 11. [Bugs Found & Historical Record](#11-bugs-found--historical-record)
 12. [Version 0.2 Changes](#12-version-02-changes)
+13. [Version 0.2.1 Changes](#13-version-021-changes)
 
 ---
 
@@ -389,11 +390,14 @@ Apply with: `/etc/init.d/marktrack reload`
 
 ---
 
-### 5.5 Lua RPC — `luci.marktrack`
+### 5.5 Shell RPC — `luci.marktrack`
 
 **Path:** `/usr/libexec/rpcd/luci.marktrack`  
-**Protocol:** Standard rpcd Lua stdin/stdout JSON dispatch  
+**Language:** POSIX shell + `awk` (busybox-compatible) — **no `lua` / `luci-lib-jsonc` dependency**  
+**Protocol:** Standard rpcd exec-plugin `list` / `call <method>` argv protocol  
 **Method:** `getConntrackDSCP`
+
+> **v0.2 note:** This backend was originally Lua (requiring `lua` + `luci-lib-jsonc`). On apk-based OpenWrt (24.10+) those packages are not installed by default, which caused the Connections page to fail with "No connection data received". It was rewritten in shell + `awk` (matching the sibling `luci.marktrack_stats`) so it runs with only busybox present.
 
 **What it does:**
 1. Reads UCI `marktrack.settings.MAX_CONNECTIONS` via `uci -q get` subprocess
@@ -1190,3 +1194,16 @@ Version 0.2 is a full functional-verification pass over the entire project. Ever
 - **All four JS views** pass `node --check`.
 - **Generated nftables ruleset** and the **custom-rules validation wrapper** pass `nft --check`.
 - **All shell scripts** pass `sh -n`; both JSON config files pass `jq empty`.
+
+---
+
+## 13. Version 0.2.1 Changes
+
+Follow-up fixes after real-router testing (Cudy / OpenWrt 24.10, apk-based).
+
+| ID | Area | Change |
+|---|---|---|
+| V021-01 | **Connections fix** | The Lua conntrack backend needed `lua` + `luci-lib-jsonc`, absent by default on apk-based 24.10, causing "No connection data received". Rewrote `luci.marktrack` in **shell + awk** (busybox-verified) — zero extra language deps. Output validated identical under gawk and busybox awk for TCP/UDP/ICMP/IPv6. |
+| V021-02 | **Dependencies** | Removed `+lua +luci-lib-jsonc` from `luci-app-marktrack` Makefile and from the installer's dependency list (now just `nftables kmod-nf-conntrack jq ca-bundle`). |
+| V021-03 | **In-page navigation** | Added a section navigation bar rendered at the top of all four views (DSCP Rules / IP Sets / Custom Rules / Connections). Users can switch sections from within the page instead of the top menu bar; the active section is highlighted. |
+| V021-04 | **Installer** | Package-manager auto-detection (`apk` on 24.10+, `opkg` on 23.05 and older). |

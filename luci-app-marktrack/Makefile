@@ -8,7 +8,7 @@ PKG_MAINTAINER:=Mark and Track Contributors
 PKG_LICENSE:=GPL-3.0-or-later
 
 LUCI_TITLE:=Mark and Track — LuCI Web Interface
-LUCI_DEPENDS:=+marktrack +lua +luci-lib-jsonc +jq
+LUCI_DEPENDS:=+marktrack +jq
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk

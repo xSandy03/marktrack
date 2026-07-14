@@ -24,8 +24,9 @@ Mark and Track targets OpenWrt **21.02 or newer** (nftables + conntrack). It shi
 | `nftables` | Applies the DSCP marking rules |
 | `kmod-nf-conntrack` | Stores marks per connection |
 | `jq` | Rule hit counters in the UI |
-| `lua`, `luci-lib-jsonc` | Connections UI backend |
 | `ca-bundle` | HTTPS fetch from GitHub (for the one-line installer) |
+
+> The Connections page backend is pure shell + `awk` (busybox), so no `lua`/`luci-lib-jsonc` is required.
 
 ### Method A — One-line install (no build, recommended)
 
@@ -38,7 +39,7 @@ LATEST_TAG=$(uclient-fetch -O - https://api.github.com/repos/$REPO/releases/late
 BASE="https://raw.githubusercontent.com/$REPO/$LATEST_TAG"
 
 # Dependencies (auto-detects apk on OpenWrt 24.10+, opkg on 23.05 and older)
-DEPS="nftables kmod-nf-conntrack jq lua luci-lib-jsonc ca-bundle"
+DEPS="nftables kmod-nf-conntrack jq ca-bundle"
 if command -v apk >/dev/null 2>&1; then
     apk update && apk add $DEPS
 elif command -v opkg >/dev/null 2>&1; then
