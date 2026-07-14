@@ -13,6 +13,78 @@ This project is a streamlined fork of the marking and tracking components from [
 - **Live Connections UI**: A real-time LuCI dashboard showing all active connections, their decoded DSCP labels (e.g., `CS0`, `CS5`, `AF42`), and live bandwidth usage.
 - **Rule Hit Counters**: View packet and byte match counters live in the LuCI interface for every active rule.
 
+## Installation
+
+Mark and Track targets OpenWrt **21.02 or newer** (nftables + conntrack). It ships as two packages: `marktrack` (backend) and `luci-app-marktrack` (web UI).
+
+### Requirements
+
+| Package | Why |
+|---|---|
+| `nftables` | Applies the DSCP marking rules |
+| `kmod-nf-conntrack` | Stores marks per connection |
+| `jq` | Rule hit counters in the UI |
+| `lua`, `luci-lib-jsonc` | Connections UI backend |
+
+### Method A — Build from source with the OpenWrt SDK (recommended)
+
+```sh
+# 1. Get the SDK for your target/version from https://downloads.openwrt.org
+#    (example: x86_64 / 23.05.3), unpack it, and cd into it.
+
+# 2. Drop marktrack into the SDK's package tree
+git clone https://github.com/xSandy03/marktrack package/marktrack
+
+# 3. Select both packages, then build them
+make menuconfig          # Network > marktrack   and   LuCI > Applications > luci-app-marktrack
+make package/marktrack/compile V=s
+make package/luci-app-marktrack/compile V=s
+
+# 4. Copy the resulting .ipk files to the router and install
+scp bin/packages/*/base/marktrack_*.ipk bin/packages/*/base/luci-app-marktrack_*.ipk root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 'opkg install /tmp/marktrack_*.ipk /tmp/luci-app-marktrack_*.ipk'
+```
+
+### Method B — Manual install (quick test / development)
+
+Run these from the repository root, pointing `ROUTER` at your device:
+
+```sh
+ROUTER=root@192.168.1.1
+
+# Dependencies
+ssh $ROUTER 'opkg update && opkg install nftables kmod-nf-conntrack jq lua luci-lib-jsonc'
+
+# Backend
+ssh $ROUTER 'mkdir -p /etc/marktrack.d'
+scp etc/marktrack.sh                 $ROUTER:/etc/marktrack.sh
+scp etc/init.d/marktrack             $ROUTER:/etc/init.d/marktrack
+scp etc/config/marktrack             $ROUTER:/etc/config/marktrack
+scp etc/marktrack.d/custom_rules.nft $ROUTER:/etc/marktrack.d/custom_rules.nft
+
+# LuCI frontend
+ssh $ROUTER 'mkdir -p /usr/libexec/rpcd /usr/share/luci/menu.d /usr/share/rpcd/acl.d /www/luci-static/resources/view/marktrack'
+scp luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack \
+    luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack_stats        $ROUTER:/usr/libexec/rpcd/
+scp luci-app-marktrack/root/usr/share/luci/menu.d/luci-app-marktrack.json $ROUTER:/usr/share/luci/menu.d/
+scp luci-app-marktrack/root/usr/share/rpcd/acl.d/luci-app-marktrack.json  $ROUTER:/usr/share/rpcd/acl.d/
+scp luci-app-marktrack/htdocs/luci-static/resources/view/marktrack/*.js   $ROUTER:/www/luci-static/resources/view/marktrack/
+
+# Permissions, enable, and start
+ssh $ROUTER 'chmod 755 /etc/marktrack.sh /etc/init.d/marktrack /usr/libexec/rpcd/luci.marktrack /usr/libexec/rpcd/luci.marktrack_stats'
+ssh $ROUTER '/etc/init.d/marktrack enable && /etc/init.d/marktrack start'
+ssh $ROUTER '/etc/init.d/rpcd restart && /etc/init.d/uhttpd restart'   # register the RPC + web UI
+```
+
+### Verify
+
+```sh
+/etc/init.d/marktrack health_check      # checks the nftables table, chain, and ct mark rule
+nft list table inet marktrack           # inspect the applied ruleset
+```
+
+Then open **LuCI → Network → Mark and Track** in your browser. For version-specific notes (21.02 / 22.03 / 23.05) and a deeper walkthrough, see [`DOCS.md`](DOCS.md).
+
 ## Architecture & How It Works
 
 Mark and Track is composed of two packages:

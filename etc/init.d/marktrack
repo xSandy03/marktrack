@@ -109,13 +109,19 @@ reload_service() {
 validate_custom_rules() {
     local rules_file="$MARKTRACK_CUSTOM_RULES_FILE"
     local tmp_check="/tmp/marktrack_validate_check.nft"
+    local result_file="/tmp/marktrack_custom_rules_validation.txt"
+
+    # Always create a result file so the UI has something to read
+    : > "$result_file"
 
     if [ ! -f "$rules_file" ]; then
+        printf 'Custom rules file not found: %s\nOverall validation: FAILED\n' "$rules_file" > "$result_file"
         print_msg "Custom rules file not found: $rules_file"
         return 1
     fi
 
     if [ ! -s "$rules_file" ]; then
+        printf 'Custom rules file is empty — nothing to validate.\nOverall validation: PASSED\n' > "$result_file"
         print_msg "Custom rules file is empty: $rules_file"
         return 0
     fi
@@ -128,9 +134,15 @@ validate_custom_rules() {
         printf '\n\t}\n}\n'
     } > "$tmp_check"
 
-    if nft --check --file "$tmp_check" 2>&1; then
+    local nft_output
+    nft_output=$(nft --check --file "$tmp_check" 2>&1)
+    local nft_exit=$?
+
+    if [ $nft_exit -eq 0 ]; then
+        printf 'nft syntax check: OK\n\nOverall validation: PASSED\n' > "$result_file"
         print_msg "" "Custom rules syntax: OK"
     else
+        printf 'nft syntax check output:\n%s\n\nOverall validation: FAILED\n' "$nft_output" > "$result_file"
         print_msg "" "Custom rules syntax: ERRORS FOUND (see above)"
         rm -f "$tmp_check"
         return 1

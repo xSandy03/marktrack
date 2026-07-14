@@ -19,7 +19,8 @@ json_uint_or_zero() {
 # ── getRuleCounters ────────────────────────────────────────────────────────────
 # Reads the marktrack nftables table in JSON format and extracts per-rule
 # packet/byte counters for rules that have a comment (name) field.
-# Output: { "rule_counters": [ { "name": "...", "packets": N, "bytes": N }, ... ] }
+# Output: { "rule_counters": [ { "rule_name": "...", "total_packets": N, "total_bytes": N,
+#            "ipv4_packets": N, "ipv6_packets": N }, ... ] }
 
 get_rule_counters() {
     # Verify jq is available
@@ -43,22 +44,31 @@ get_rule_counters() {
         return 0
     fi
 
-    # Extract rules that have both a comment (rule name) and a counter expression
-    # nft JSON structure: .nftables[] -> .rule -> { comment, expr: [...] }
+    # Extract rules that have a comment (rule name) and a counter expression.
+    # nft comments are prefixed "ipv4_<name>" or "ipv6_<name>" — strip the prefix and
+    # aggregate both directions so the UI can look up by the plain UCI rule name.
     printf '%s\n' "$table_json" | jq '{
-        rule_counters: [
-            .nftables[]
-            | .rule?
-            | select(. != null)
-            | select(.comment != null)
-            | . as $rule
-            | {
-                name:    $rule.comment,
-                packets: ([$rule.expr[]? | select(.counter?) | .counter.packets] | first // 0),
-                bytes:   ([$rule.expr[]? | select(.counter?) | .counter.bytes]   | first // 0)
-              }
-            | select(.packets != null)
-        ]
+        rule_counters: (
+            [
+                .nftables[]
+                | .rule?
+                | select(. != null and .comment != null)
+                | {
+                    base_name: (.comment | ltrimstr("ipv4_") | ltrimstr("ipv6_")),
+                    is_v4:     (.comment | startswith("ipv4_")),
+                    packets:   ([.expr[]? | select(.counter?) | .counter.packets] | first // 0),
+                    bytes:     ([.expr[]? | select(.counter?) | .counter.bytes]   | first // 0)
+                  }
+            ]
+            | group_by(.base_name)
+            | map({
+                rule_name:     .[0].base_name,
+                total_packets: ([.[].packets] | add // 0),
+                total_bytes:   ([.[].bytes]   | add // 0),
+                ipv4_packets:  ([.[] | select(.is_v4)       | .packets] | add // 0),
+                ipv6_packets:  ([.[] | select(.is_v4 | not) | .packets] | add // 0)
+              })
+        )
     }' 2>/dev/null || printf '{"rule_counters":[]}\n'
 }
 
