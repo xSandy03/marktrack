@@ -1,0 +1,159 @@
+#!/usr/bin/env lua
+
+-- Mark and Track — LuCI rpcd backend
+-- Reads /proc/net/nf_conntrack and exposes connection data with DSCP labels.
+-- Called by the LuCI connections.js page via ubus.
+
+local jsonc = require "luci.jsonc"
+
+-- Decode a numeric DSCP value to a human-readable label
+local function dscp_to_label(dscp)
+    local map = {
+        [0]  = "CS0",  [8]  = "CS1",
+        [10] = "AF11", [12] = "AF12", [14] = "AF13",
+        [16] = "CS2",  [18] = "AF21", [20] = "AF22", [22] = "AF23",
+        [24] = "CS3",  [26] = "AF31", [28] = "AF32", [30] = "AF33",
+        [32] = "CS4",  [34] = "AF41", [36] = "AF42", [38] = "AF43",
+        [40] = "CS5",  [46] = "EF",
+        [48] = "CS6",  [56] = "CS7"
+    }
+    return map[dscp] or tostring(dscp)
+end
+
+-- Parse one line from /proc/net/nf_conntrack
+-- Returns a table or nil on failure
+local function parse_connection(line)
+    local conn = {}
+
+    -- Extract protocol family, layer 4 proto number, protocol name, timeout
+    conn.layer3, conn.layer4, conn.protocol, conn.timeout =
+        line:match("(%w+)%s+(%d+)%s+(%w+)%s+(%d+)")
+    if not (conn.layer3 and conn.protocol and conn.timeout) then
+        return nil
+    end
+
+    if conn.protocol == "icmp" or conn.protocol == "icmpv6" then
+        -- ICMP: no ports
+        conn.src, conn.dst = line:match("src=(%S+)%s+dst=(%S+)")
+        conn.sport, conn.dport = "-", "-"
+        local pkts, bytes = line:match("packets=(%d+)%s+bytes=(%d+)")
+        conn.in_packets  = pkts  or "0"
+        conn.in_bytes    = bytes or "0"
+        conn.out_packets = conn.in_packets
+        conn.out_bytes   = conn.in_bytes
+    else
+        -- TCP/UDP: two directions (original + reply)
+        local src1, dst1, sport1, dport1, pkts1, bytes1,
+              src2, dst2, sport2, dport2, pkts2, bytes2 =
+            line:match(
+                "src=(%S+)%s+dst=(%S+)%s+sport=(%d+)%s+dport=(%d+)%s+packets=(%d+)%s+bytes=(%d+)"
+                .. "%s+src=(%S+)%s+dst=(%S+)%s+sport=(%d+)%s+dport=(%d+)%s+packets=(%d+)%s+bytes=(%d+)"
+            )
+
+        if not src1 then return nil end
+
+        conn.src   = src1;   conn.dst   = dst1
+        conn.sport = sport1; conn.dport = dport1
+        conn.in_packets  = pkts1  or "0"
+        conn.in_bytes    = bytes1 or "0"
+        conn.out_packets = pkts2  or "0"
+        conn.out_bytes   = bytes2 or "0"
+    end
+
+    if not conn.src then return nil end
+
+    -- Extract conntrack mark
+    local mark_str = line:match("%smark=(%d+)")
+    local mark = tonumber(mark_str) or 0
+
+    -- Decode DSCP: mark & 0x3F (lower 6 bits)
+    -- marktrack encodes: mark = dscp | 128 (bit 7 = marktrack flag)
+    local dscp_num = mark % 64  -- equivalent to mark & 0x3F
+    conn.mark       = mark
+    conn.dscp       = dscp_num
+    conn.dscp_label = dscp_to_label(dscp_num)
+
+    -- Total bytes (both directions)
+    conn.bytes   = (tonumber(conn.in_bytes)    or 0) + (tonumber(conn.out_bytes)   or 0)
+    conn.packets = (tonumber(conn.in_packets)  or 0) + (tonumber(conn.out_packets) or 0)
+    conn.timeout = tonumber(conn.timeout) or 0
+
+    return conn
+end
+
+-- Read MAX_CONNECTIONS from UCI
+local function get_max_connections()
+    local f = io.popen("uci -q get marktrack.settings.MAX_CONNECTIONS 2>/dev/null")
+    if not f then return 0 end
+    local val = tonumber(f:read("*l")) or 0
+    f:close()
+    return val
+end
+
+-- Main: read conntrack table and return structured JSON
+local function get_conntrack_dscp()
+    local connections = {}
+    local count = 0
+    local max_connections = get_max_connections()
+
+    local f = io.open("/proc/net/nf_conntrack", "r")
+    if not f then
+        return jsonc.stringify({ connections = {}, max_connections = 0, error = "Cannot open /proc/net/nf_conntrack" })
+    end
+
+    for line in f:lines() do
+        if max_connections > 0 and count >= max_connections then break end
+
+        local conn = parse_connection(line)
+        if conn then
+            -- Build a stable key for this connection
+            local key = string.format("%s_%s_%s_%s_%s",
+                conn.protocol, conn.src, conn.sport, conn.dst, conn.dport)
+
+            connections[key] = {
+                protocol  = conn.protocol,
+                src       = conn.src,
+                dst       = conn.dst,
+                sport     = conn.sport,
+                dport     = conn.dport,
+                bytes     = conn.bytes,
+                packets   = conn.packets,
+                timeout   = conn.timeout,
+                mark      = conn.mark,
+                dscp      = conn.dscp,
+                dscp_label = conn.dscp_label
+            }
+            count = count + 1
+        end
+    end
+    f:close()
+
+    return jsonc.stringify({
+        connections     = connections,
+        max_connections = max_connections
+    })
+end
+
+-- rpcd dispatch
+local methods = {
+    getConntrackDSCP = {
+        call = function()
+            return get_conntrack_dscp()
+        end
+    }
+}
+
+-- Standard rpcd stdin dispatch loop
+local line = io.read("*l")
+while line do
+    local req = jsonc.parse(line)
+    if req and req.method and methods[req.method] then
+        local result = methods[req.method].call(req.params or {})
+        io.write(result .. "\n")
+        io.flush()
+    else
+        io.write(jsonc.stringify({ error = "unknown method" }) .. "\n")
+        io.flush()
+    end
+    line = io.read("*l")
+end

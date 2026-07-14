@@ -1,0 +1,84 @@
+#!/bin/sh
+# Mark and Track — statistics rpcd backend
+# Provides nftables rule hit counters to the LuCI rules.js page.
+# Called via ubus as: ubus call luci.marktrack_stats getRuleCounters
+# shellcheck disable=SC2039,SC3043,SC2155
+
+. /lib/functions.sh
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+# Safely emit a JSON unsigned integer (default 0 for invalid input)
+json_uint_or_zero() {
+    case "$1" in
+        ''|*[!0-9]*) printf '0' ;;
+        *)           printf '%s' "$1" ;;
+    esac
+}
+
+# ── getRuleCounters ────────────────────────────────────────────────────────────
+# Reads the marktrack nftables table in JSON format and extracts per-rule
+# packet/byte counters for rules that have a comment (name) field.
+# Output: { "rule_counters": [ { "name": "...", "packets": N, "bytes": N }, ... ] }
+
+get_rule_counters() {
+    # Verify jq is available
+    if ! command -v jq > /dev/null 2>&1; then
+        printf '{"rule_counters":[]}\n'
+        return 0
+    fi
+
+    # Check table exists
+    if ! nft list table inet marktrack > /dev/null 2>&1; then
+        printf '{"rule_counters":[]}\n'
+        return 0
+    fi
+
+    # Get table as JSON
+    local table_json
+    table_json=$(nft -j list table inet marktrack 2>/dev/null)
+
+    if [ -z "$table_json" ]; then
+        printf '{"rule_counters":[]}\n'
+        return 0
+    fi
+
+    # Extract rules that have both a comment (rule name) and a counter expression
+    # nft JSON structure: .nftables[] -> .rule -> { comment, expr: [...] }
+    printf '%s\n' "$table_json" | jq '{
+        rule_counters: [
+            .nftables[]
+            | .rule?
+            | select(. != null)
+            | select(.comment != null)
+            | . as $rule
+            | {
+                name:    $rule.comment,
+                packets: ([$rule.expr[]? | select(.counter?) | .counter.packets] | first // 0),
+                bytes:   ([$rule.expr[]? | select(.counter?) | .counter.bytes]   | first // 0)
+              }
+            | select(.packets != null)
+        ]
+    }' 2>/dev/null || printf '{"rule_counters":[]}\n'
+}
+
+# ── rpcd dispatch ──────────────────────────────────────────────────────────────
+
+case "$1" in
+    list)
+        printf '{"getRuleCounters":{}}\n'
+        ;;
+    call)
+        case "$2" in
+            getRuleCounters)
+                get_rule_counters
+                ;;
+            *)
+                printf '{"error":"unknown method"}\n'
+                ;;
+        esac
+        ;;
+    *)
+        printf '{"error":"usage: %s {list|call <method>}"}\n' "$0"
+        ;;
+esac

@@ -1,0 +1,180 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010
+
+# Mark and Track — OpenWrt init script
+# Controls the marktrack nftables DSCP marking service.
+
+START=95
+STOP=95
+USE_PROCD=1
+
+EXTRA_COMMANDS="validate_custom_rules health_check"
+EXTRA_HELP="
+        validate_custom_rules    Validate /etc/marktrack.d/custom_rules.nft syntax
+        health_check             Verify marktrack nftables table is active"
+
+_NL_='
+'
+DEFAULT_IFS=" 	${_NL_}"
+IFS="$DEFAULT_IFS"
+
+MARKTRACK_CFG_FILE=/etc/config/marktrack
+MARKTRACK_D=/etc/marktrack.d
+MARKTRACK_MAIN_SCRIPT=/etc/marktrack.sh
+MARKTRACK_CUSTOM_RULES_FILE=${MARKTRACK_D}/custom_rules.nft
+
+error_out() { log_msg -err "${@}"; }
+
+print_msg() {
+    local _arg
+    for _arg in "$@"; do
+        case "${_arg}" in
+            '') printf '\n' ;;
+            *)  printf '%s\n' "${_arg}"
+        esac
+    done
+    :
+}
+
+log_msg() {
+    local msgs_prefix='' _arg err_l=info msgs_dest
+    local IFS="$DEFAULT_IFS"
+    for _arg in "$@"; do
+        case "${_arg}" in
+            "-err")  err_l=err  msgs_prefix="Error: " ;;
+            "-warn") err_l=warn msgs_prefix="Warning: " ;;
+            '')      printf '\n' ;;
+            *)
+                case "$err_l" in
+                    err|warn) msgs_dest="/dev/stderr" ;;
+                    *)        msgs_dest="/dev/stdout"
+                esac
+                printf '%s\n' "${msgs_prefix}${_arg}" > "$msgs_dest"
+                logger -t marktrack -p user."$err_l" "${msgs_prefix}${_arg}"
+                msgs_prefix=''
+        esac
+    done
+    :
+}
+
+load_config() {
+    . /lib/functions.sh
+    config_load marktrack || { error_out "Failed to load marktrack UCI config."; return 1; }
+    :
+}
+
+# ── Service start ──────────────────────────────────────────────────────────────
+
+start_service() {
+    load_config || return 1
+
+    local enabled
+    config_get_bool enabled global enabled 1
+    if [ "$enabled" != "1" ]; then
+        log_msg "Mark and Track is disabled in config — not starting."
+        return 0
+    fi
+
+    log_msg "Starting Mark and Track..."
+    /bin/sh "$MARKTRACK_MAIN_SCRIPT" || {
+        error_out "marktrack.sh exited with error."
+        return 1
+    }
+
+    # Procd one-shot instance (keeps service registered so status/stop work)
+    procd_open_instance
+    procd_set_param command /bin/true
+    procd_close_instance
+}
+
+# ── Service stop ───────────────────────────────────────────────────────────────
+
+stop_service() {
+    log_msg "Stopping Mark and Track..."
+    nft delete table inet marktrack 2>/dev/null || true
+    rm -f /tmp/marktrack_set_families
+    log_msg "marktrack nftables table removed."
+}
+
+# ── Reload ─────────────────────────────────────────────────────────────────────
+
+reload_service() {
+    log_msg "Reloading Mark and Track..."
+    stop_service
+    start_service
+}
+
+# ── Extra: validate_custom_rules ───────────────────────────────────────────────
+
+validate_custom_rules() {
+    local rules_file="$MARKTRACK_CUSTOM_RULES_FILE"
+    local tmp_check="/tmp/marktrack_validate_check.nft"
+
+    if [ ! -f "$rules_file" ]; then
+        print_msg "Custom rules file not found: $rules_file"
+        return 1
+    fi
+
+    if [ ! -s "$rules_file" ]; then
+        print_msg "Custom rules file is empty: $rules_file"
+        return 0
+    fi
+
+    # Wrap in a throwaway table/chain context for syntax check
+    {
+        printf 'table inet __marktrack_validate {\n'
+        printf '\tchain __validate {\n'
+        cat "$rules_file"
+        printf '\n\t}\n}\n'
+    } > "$tmp_check"
+
+    if nft --check --file "$tmp_check" 2>&1; then
+        print_msg "" "Custom rules syntax: OK"
+    else
+        print_msg "" "Custom rules syntax: ERRORS FOUND (see above)"
+        rm -f "$tmp_check"
+        return 1
+    fi
+    rm -f "$tmp_check"
+}
+
+# ── Extra: health_check ────────────────────────────────────────────────────────
+
+health_check() {
+    local ok=1
+
+    print_msg "── Mark and Track Health Check ──"
+
+    # 1. Check nftables table exists
+    if nft list table inet marktrack > /dev/null 2>&1; then
+        print_msg "  [OK] nftables table 'inet marktrack' is active."
+    else
+        print_msg "  [FAIL] nftables table 'inet marktrack' NOT found. Is marktrack running?"
+        ok=0
+    fi
+
+    # 2. Check chain exists
+    if nft list table inet marktrack 2>/dev/null | grep -q "chain marktrack"; then
+        print_msg "  [OK] marktrack chain found."
+    else
+        print_msg "  [FAIL] marktrack chain not found in table."
+        ok=0
+    fi
+
+    # 3. Check ct mark rule exists
+    if nft list table inet marktrack 2>/dev/null | grep -q "ct mark set"; then
+        print_msg "  [OK] ct mark rule present — connections UI will work."
+    else
+        print_msg "  [WARN] ct mark rule not found — connections UI may not show DSCP."
+        ok=0
+    fi
+
+    # 4. Show current rules count
+    local rule_count
+    rule_count=$(nft list table inet marktrack 2>/dev/null | grep -c "dscp set" || echo 0)
+    print_msg "  [INFO] Active DSCP marking rules: $rule_count"
+
+    print_msg "────────────────────────────────"
+
+    [ "$ok" -eq 1 ]
+}

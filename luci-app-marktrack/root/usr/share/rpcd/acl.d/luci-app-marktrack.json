@@ -1,0 +1,25 @@
+{
+  "luci-app-marktrack": {
+    "description": "Grant access to Mark and Track LuCI app",
+    "read": {
+      "ubus": {
+        "luci.marktrack": [ "getConntrackDSCP" ],
+        "luci.marktrack_stats": [ "getRuleCounters" ]
+      },
+      "uci": [ "marktrack" ],
+      "file": {
+        "/etc/marktrack.d/custom_rules.nft": [ "read" ],
+        "/proc/net/nf_conntrack": [ "read" ]
+      }
+    },
+    "write": {
+      "uci": [ "marktrack" ],
+      "file": {
+        "/etc/marktrack.d/custom_rules.nft": [ "write" ]
+      },
+      "ubus": {
+        "luci": [ "setInitAction" ]
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Mark and Track — custom nftables rules
+# Rules placed here are included inside the 'marktrack' chain.
+# They run AFTER all UCI-defined DSCP rules.
+#
+# Syntax: standard nftables chain rules (no table/chain declaration needed).
+# Example:
+#   meta l4proto tcp th dport 443 ip dscp set cs4 counter comment "HTTPS priority";
+#
+# Validate with: /etc/init.d/marktrack validate_custom_rules
+# Apply with:    /etc/init.d/marktrack reload

@@ -1,0 +1,42 @@
+{
+  "admin/marktrack": {
+    "title": "Mark and Track",
+    "order": 80,
+    "action": {
+      "type": "firstchild"
+    },
+    "icon": "img/icons/cog.gif"
+  },
+  "admin/marktrack/rules": {
+    "title": "DSCP Rules",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "marktrack/rules"
+    }
+  },
+  "admin/marktrack/ipsets": {
+    "title": "IP Sets",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "marktrack/ipsets"
+    }
+  },
+  "admin/marktrack/custom_rules": {
+    "title": "Custom Rules",
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "marktrack/custom_rules"
+    }
+  },
+  "admin/marktrack/connections": {
+    "title": "Connections",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "marktrack/connections"
+    }
+  }
+}

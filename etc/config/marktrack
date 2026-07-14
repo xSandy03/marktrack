@@ -1,0 +1,26 @@
+config global 'global'
+	option enabled '1'
+
+config settings 'settings'
+	option NFT_HOOK 'forward'
+	option NFT_PRIORITY '0'
+	option MAX_CONNECTIONS '0'
+
+config custom_rules 'custom_rules'
+
+#config rule 'gaming'
+#	option name 'gaming'
+#	option proto 'udp'
+#	option src_ip '192.168.1.50'
+#	option dest_port '30000-65535'
+#	option class 'cs5'
+#	option counter '1'
+#	option enabled '1'
+
+#config ipset
+#	option name 'gaming_devices'
+#	option mode 'static'
+#	option family 'ipv4'
+#	list ip4 '192.168.1.50'
+#	list ip4 '192.168.1.51'
+#	option enabled '1'
