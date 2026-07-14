@@ -37,9 +37,13 @@ LATEST_TAG=$(uclient-fetch -O - https://api.github.com/repos/$REPO/releases/late
 [ -z "$LATEST_TAG" ] && LATEST_TAG="v0.2"
 BASE="https://raw.githubusercontent.com/$REPO/$LATEST_TAG"
 
-# Dependencies
-opkg update
-opkg install nftables kmod-nf-conntrack jq lua luci-lib-jsonc ca-bundle
+# Dependencies (auto-detects apk on OpenWrt 24.10+, opkg on 23.05 and older)
+DEPS="nftables kmod-nf-conntrack jq lua luci-lib-jsonc ca-bundle"
+if command -v apk >/dev/null 2>&1; then
+    apk update && apk add $DEPS
+elif command -v opkg >/dev/null 2>&1; then
+    opkg update && opkg install $DEPS
+fi
 
 # Backend (marktrack)
 mkdir -p /etc/marktrack.d
