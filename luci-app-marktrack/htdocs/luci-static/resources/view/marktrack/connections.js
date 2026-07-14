@@ -6,7 +6,7 @@
 'require form';
 'require uci';
 
-var callQoSmateConntrackDSCP = rpc.declare({
+var callConntrackDSCP = rpc.declare({
     object: 'luci.marktrack',
     method: 'getConntrackDSCP',
     expect: { }
@@ -66,7 +66,7 @@ return view.extend({
 
     load: function() {
         return Promise.all([
-            L.resolveDefault(callQoSmateConntrackDSCP(), { connections: {} }),
+            L.resolveDefault(callConntrackDSCP(), { connections: {} }),
             uci.load('marktrack')
         ]);
     },
@@ -82,7 +82,7 @@ return view.extend({
         }
         
         // Get current UCI value for dropdown
-        var current_uci_limit = uci.get('marktrack', 'advanced', 'MAX_CONNECTIONS') || '0';
+        var current_uci_limit = uci.get('marktrack', 'settings', 'MAX_CONNECTIONS') || '0';
 
         var filterInput = E('input', {
             'type': 'text',
@@ -122,7 +122,7 @@ return view.extend({
         // Function to apply connection limit directly
         function applyConnectionLimit(newLimit) {
             return uci.load('marktrack').then(function() {
-                uci.set('marktrack', 'advanced', 'MAX_CONNECTIONS', newLimit.toString());
+                uci.set('marktrack', 'settings', 'MAX_CONNECTIONS', newLimit.toString());
                 return uci.save();
             }).then(function() {
                 return uci.apply();
@@ -465,7 +465,7 @@ return view.extend({
         // Include limit elements in the top container
         return E('div', { 'class': 'cbi-map' }, [
             style,
-            E('h2', _('QoSmate Connections')),
+            E('h2', _('Mark and Track — Connections')),
             limitWarning,
             E('div', { 'style': 'margin-bottom: 10px;' }, [
                 filterInput,
@@ -583,7 +583,7 @@ function adaptivePoll(view) {
         return; // Do not schedule a new poll if auto-refresh is paused
     }
     var startTime = Date.now();
-    L.resolveDefault(callQoSmateConntrackDSCP(), { connections: {} }).then(function(result) {
+    L.resolveDefault(callConntrackDSCP(), { connections: {} }).then(function(result) {
         var responseTime = Date.now() - startTime;
         
         // Adjust the polling interval based on response time.        

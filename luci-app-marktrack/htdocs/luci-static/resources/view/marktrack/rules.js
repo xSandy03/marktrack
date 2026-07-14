@@ -313,7 +313,7 @@ return view.extend({
             })
             .catch(err => {
                 ui.hideModal();
-                ui.addNotification(null, E('p', _('Failed to save settings or update QoSmate service: ') + err.message));
+                ui.addNotification(null, E('p', _('Failed to save settings or update marktrack service: ') + err.message));
             });
     },
 
@@ -321,7 +321,7 @@ return view.extend({
         var m, s, o;
 
         m = new form.Map('marktrack', _('Mark and Track Rules'),
-            _('Configure QoS rules for marking packets with DSCP values.'));
+            _('Define rules that tag matching packets with a DSCP value. Rules are evaluated top to bottom; the DSCP mark is then saved into conntrack so it can be viewed on the Connections page.'));
 
         s = m.section(form.GridSection, 'rule', _('Rules'));
         s.addremove = true;
@@ -329,55 +329,26 @@ return view.extend({
         s.sortable  = true;
 
         s.tab('general', _('General Settings'));
-        s.tab('mapping', _('DSCP Mapping'));
 
-        // Add mapping information to the description
+        // Simple DSCP reference — common classes, their decimal value, and typical use.
         s.description = E('div', { 'class': 'cbi-section-descr' }, [
-            E('h4', _('HFSC Mapping:')),
+            E('h4', _('DSCP Class Reference')),
             E('table', { 'class': 'table' }, [
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left', 'width': '25%' }, _('High Priority [Realtime] (1:11)')),
-                    E('td', { 'class': 'td left' }, 'EF, CS5, CS6, CS7')
+                E('tr', { 'class': 'tr table-titles' }, [
+                    E('th', { 'class': 'th left', 'width': '20%' }, _('Class')),
+                    E('th', { 'class': 'th left', 'width': '15%' }, _('Value')),
+                    E('th', { 'class': 'th left' }, _('Typical Use'))
                 ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Fast Non-Realtime (1:12)')),
-                    E('td', { 'class': 'td left' }, 'CS4, AF41, AF42')
-                ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Normal (1:13)')),
-                    E('td', { 'class': 'td left' }, 'CS0')
-                ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Low Priority (1:14)')),
-                    E('td', { 'class': 'td left' }, 'CS2, AF11')
-                ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Bulk (1:15)')),
-                    E('td', { 'class': 'td left' }, 'CS1')
-                ])
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'EF'),  E('td', { 'class': 'td left' }, '46'), E('td', { 'class': 'td left' }, _('Voice / real-time (VoIP, gaming)')) ]),
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS5'), E('td', { 'class': 'td left' }, '40'), E('td', { 'class': 'td left' }, _('Signaling / high priority')) ]),
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS4'), E('td', { 'class': 'td left' }, '32'), E('td', { 'class': 'td left' }, _('Real-time interactive / video')) ]),
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'AF41'), E('td', { 'class': 'td left' }, '34'), E('td', { 'class': 'td left' }, _('Multimedia conferencing')) ]),
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS2'), E('td', { 'class': 'td left' }, '16'), E('td', { 'class': 'td left' }, _('Network operations / low latency data')) ]),
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS0'), E('td', { 'class': 'td left' }, '0'),  E('td', { 'class': 'td left' }, _('Best effort (default, no priority)')) ]),
+                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS1'), E('td', { 'class': 'td left' }, '8'),  E('td', { 'class': 'td left' }, _('Background / bulk (lowest priority)')) ])
             ]),
-            E('p', { 'style': 'font-size:0.9em; margin: -5px 0 15px 5px;' }, [
-                E('strong', _('Hybrid Note:')), ' ', 
-                _('Uses Realtime (1:11) & Bulk (1:15) classes with their dscp values from HFSC. All other traffic is handled by a single CAKE class (1:13).')
-            ]),
-            E('h4', _('CAKE Mapping (diffserv4):')),
-            E('table', { 'class': 'table' }, [
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left', 'width': '25%' }, _('Voice (Highest Priority)')),
-                    E('td', { 'class': 'td left' }, 'CS7, CS6, EF, VA, CS5, CS4')
-                ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Video')),
-                    E('td', { 'class': 'td left' }, 'CS3, AF4x, AF3x, AF2x, CS2, TOS1')
-                ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Best Effort')),
-                    E('td', { 'class': 'td left' }, 'CS0, AF1x, TOS0')
-                ]),
-                E('tr', { 'class': 'tr' }, [
-                    E('td', { 'class': 'td left' }, _('Bulk (Lowest Priority)')),
-                    E('td', { 'class': 'td left' }, 'CS1, LE')
-                ])
+            E('p', { 'style': 'font-size:0.9em; margin: 6px 0 10px 2px;' }, [
+                _('Mark and Track only tags packets. Whether a DSCP value changes real priority depends on your QoS/shaper (e.g. SQM/CAKE) or upstream network honoring these values.')
             ])
         ]);
 

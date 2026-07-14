@@ -26,27 +26,21 @@ return view.extend({
                 ui.addNotification(null, E('p', _('All rules have been saved and applied.')), 'success');
             })
             .catch((err) => {
-                ui.addNotification(null, E('p', _('Failed to save settings or restart QoSmate: ') + err.message), 'error');
+                ui.addNotification(null, E('p', _('Failed to save settings or restart marktrack: ') + err.message), 'error');
             });
     },
 
     load: function() {
         return Promise.all([
             fs.read('/etc/marktrack.d/custom_rules.nft')
-                .then(content => {
-                    content = content.replace(/^table\s+inet\s+marktrack_custom\s*{/, '');
-                    content = content.replace(/}\s*$/, '');
-                    return content.trim();
-                })
-                .catch(() => ''),
-            fs.read('/etc/marktrack.d/inline_dscptag.nft')
+                .then(content => content.trim())
                 .catch(() => ''),
             fs.read('/tmp/marktrack_custom_rules_validation.txt')
                 .catch(() => '')
         ]);
     },
 
-    render: function([customRules, inlineRules, validationResult]) {
+    render: function([customRules, validationResult]) {
         var m, s, o;
 
         m = new form.Map('marktrack', _('Mark and Track Custom Rules'),
@@ -75,16 +69,8 @@ return view.extend({
                             if (customTextarea) {
                                 customTextarea.value = '';
                             }
-                            
-                            var inlineTextarea = document.querySelector('textarea[name="cbid.marktrack.custom_rules.inline_rules"]');
-                            if (inlineTextarea) {
-                                inlineTextarea.value = '';
-                            }
-                            
-                            return fs.remove('/etc/marktrack.d/custom_rules.nft')
-                                .then(() => {
-                                    return fs.remove('/etc/marktrack.d/inline_dscptag.nft');
-                                })
+
+                            return fs.write('/etc/marktrack.d/custom_rules.nft', '')
                                 .then(() => {
                                     return ui.changes.apply();
                                 })
@@ -114,75 +100,30 @@ return view.extend({
         o.rmempty = true;
         o.monospace = true;
         o.datatype = 'string';
-        o.description = _('Enter your custom nftables rules here. The nftables rule wrapper will be added automatically.') +
+        o.description = _('Enter nftables chain statements (one per line). Do not add a table or chain wrapper — these run inside the marktrack chain, after the UCI rules and before the conntrack mark is saved. Included only if validation passes.') +
             '<div style="margin-top: 8px;">' +
             '<button type="button" onclick="toggleExample(\'custom\')" class="btn cbi-button" style="font-size: 11px; padding: 3px 6px;">' +
             '▼ ' + _('Show Examples') + '</button>' +
             '<div id="custom-example" class="cbi-section-node" style="display: none; margin-top: 8px;">' +
-            '<strong>' + _('Example (Full Table Rules):') + '</strong><br/>' +
+            '<strong>' + _('Example (chain statements):') + '</strong><br/>' +
             '<pre style="background:rgba(255,255,255,0.1); border:1px solid rgba(128,128,128,0.3); padding:6px; margin:4px 0; border-radius:3px; font-size:11px; white-space:pre-wrap; font-family:monospace;">' +
-            'chain forward {\n' +
-            '    type filter hook forward priority 0; policy accept;\n' +
-            '    # Mark high-rate TCP traffic from specific IP\n' +
-            '    ip saddr 192.168.138.100 tcp flags & (fin|syn|rst|ack) != 0\n' +
-            '    limit rate over 300/second burst 300 packets\n' +
-            '    counter ip dscp set cs1\n' +
-            '}' +
+            '# Mark VoIP (SIP) signaling as Expedited Forwarding\n' +
+            'udp dport 5060 ip dscp set ef counter comment "SIP"\n\n' +
+            '# Mark all HTTPS traffic as CS4\n' +
+            'tcp dport 443 ip dscp set cs4 counter comment "HTTPS"\n\n' +
+            '# Rate-limit high-rate TCP from one host and mark it bulk\n' +
+            'ip saddr 192.168.1.100 meta l4proto tcp limit rate over 300/second\n' +
+            '    ip dscp set cs1 counter comment "Bulk cap"' +
             '</pre></div></div>';
         o.load = function(section_id) {
             return customRules;
         };
         o.write = function(section_id, formvalue) {
-            // Prepare the new custom rules (only the table definition)
-            const newRules = `table inet marktrack_custom {
-${formvalue.trim()}
-}`;
-
-            // Delete the existing table before applying new rules
-            // If deletion fails (table doesn't exist), ignore the error
-            return fs.exec('nft', ['delete', 'table', 'inet', 'marktrack_custom'])
-                .catch(() => { /* ignore deletion error */ })
-                .then(() => fs.write('/etc/marktrack.d/custom_rules.nft', newRules))
+            return fs.write('/etc/marktrack.d/custom_rules.nft', formvalue.trim() || '')
                 .then(() => fs.exec('/etc/init.d/marktrack', ['validate_custom_rules']))
                 .then(() => fs.read('/tmp/marktrack_custom_rules_validation.txt'))
                 .then((result) => {
-                    if (result.includes('Overall validation: PASSED')) {
-                        ui.addNotification(null, E('p', _('Rules validation successful.')), 'success');
-                    } else {
-                        ui.addNotification(null, E('p', _('Rules validation failed. Please check the validation result below.')), 'warning');
-                    }
-                });
-        };
-
-        o = s.option(form.TextValue, 'inline_rules', _('Inline Extra Rules'));
-        o.rows = 10;
-        o.wrap = 'off';
-        o.rmempty = true;
-        o.monospace = true;
-        o.datatype = 'string';
-        o.description = _('Statements only – run inside chain dscptag at hook $NFT_HOOK / priority $NFT_PRIORITY. Do not start with \'table\' or \'chain\'. Included only if validation passes.') +
-            '<div style="margin-top: 8px;">' +
-            '<button type="button" onclick="toggleExample(\'inline\')" class="btn cbi-button" style="font-size: 11px; padding: 3px 6px;">' +
-            '▼ ' + _('Show Examples') + '</button>' +
-            '<div id="inline-example" class="cbi-section-node" style="display: none; margin-top: 8px;">' +
-            '<strong>' + _('Example (Inline Rules):') + '</strong><br/>' +
-            '<pre style="background:rgba(255,255,255,0.1); border:1px solid rgba(128,128,128,0.3); padding:6px; margin:4px 0; border-radius:3px; font-size:11px; white-space:pre-wrap; font-family:monospace;">' +
-            '# Mark traffic from specific IP as high priority\n' +
-            'ip saddr 192.168.1.100 ip dscp set cs5 comment "Gaming PC priority"\n\n' +
-            '# Rate limit and mark bulk TCP traffic\n' +
-            'meta l4proto tcp limit rate 100/second ip dscp set cs1 comment "Bulk TCP limit"\n\n' +
-            '# Mark VoIP traffic from specific port range\n' +
-            'udp sport 5060-5070 ip dscp set ef comment "SIP/RTP VoIP traffic"' +
-            '</pre></div></div>';
-        o.load = function(section_id) {
-            return inlineRules;
-        };
-        o.write = function(section_id, formvalue) {
-            return fs.write('/etc/marktrack.d/inline_dscptag.nft', formvalue || '')
-                .then(() => fs.exec('/etc/init.d/marktrack', ['validate_custom_rules']))
-                .then(() => fs.read('/tmp/marktrack_custom_rules_validation.txt'))
-                .then((result) => {
-                    if (result.includes('Overall validation: PASSED')) {
+                    if (result && result.includes('Overall validation: PASSED')) {
                         ui.addNotification(null, E('p', _('Rules validation successful.')), 'success');
                     } else {
                         ui.addNotification(null, E('p', _('Rules validation failed. Please check the validation result below.')), 'warning');
@@ -202,29 +143,21 @@ ${formvalue.trim()}
         o.inputstyle = 'apply';
         o.inputtitle = _('Validate');
         o.onclick = function(ev) {
-            var map = this.map;
-            var section_id = 'custom_rules'; // Assuming this is the correct section_id
-        
+            var section_id = 'custom_rules';
             var customRulesTextarea = document.getElementById('widget.cbid.marktrack.' + section_id + '.custom_rules');
-            var inlineRulesTextarea = document.getElementById('widget.cbid.marktrack.' + section_id + '.inline_rules');
-            
-            if (!customRulesTextarea || !inlineRulesTextarea) {
-                ui.addNotification(null, E('p', _('Error: Could not find rules textareas')), 'error');
+
+            if (!customRulesTextarea) {
+                ui.addNotification(null, E('p', _('Error: Could not find rules textarea')), 'error');
                 return;
             }
-        
+
             var currentCustomRules = customRulesTextarea.value;
-            var currentInlineRules = inlineRulesTextarea.value;
-            var fullCustomContent = `table inet marktrack_custom {\n${currentCustomRules.trim()}\n}`;
-        
+
             ui.showModal(_('Validating Rules'), [
                 E('p', { 'class': 'spinning' }, _('Please wait while the rules are being validated...'))
             ]);
-        
-            return fs.write('/etc/marktrack.d/custom_rules.nft', fullCustomContent)
-                .then(() => {
-                    return fs.write('/etc/marktrack.d/inline_dscptag.nft', currentInlineRules || '');
-                })
+
+            return fs.write('/etc/marktrack.d/custom_rules.nft', currentCustomRules.trim() || '')
                 .then(() => {
                     return fs.exec('/etc/init.d/marktrack', ['validate_custom_rules']);
                 })

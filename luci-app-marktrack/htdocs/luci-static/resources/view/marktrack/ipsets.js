@@ -33,7 +33,7 @@ return view.extend({
             })
             .catch(err => {
                 ui.hideModal();
-                ui.addNotification(null, E('p', _('Failed to save settings or update QoSmate service: ') + err.message));
+                ui.addNotification(null, E('p', _('Failed to save settings or update marktrack service: ') + err.message));
             });
     },
 

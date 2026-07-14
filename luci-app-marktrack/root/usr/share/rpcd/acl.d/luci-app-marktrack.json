@@ -9,13 +9,15 @@
       "uci": [ "marktrack" ],
       "file": {
         "/etc/marktrack.d/custom_rules.nft": [ "read" ],
+        "/tmp/marktrack_custom_rules_validation.txt": [ "read" ],
         "/proc/net/nf_conntrack": [ "read" ]
       }
     },
     "write": {
       "uci": [ "marktrack" ],
       "file": {
-        "/etc/marktrack.d/custom_rules.nft": [ "write" ]
+        "/etc/marktrack.d/custom_rules.nft": [ "write" ],
+        "/etc/init.d/marktrack": [ "exec" ]
       },
       "ubus": {
         "luci": [ "setInitAction" ]
