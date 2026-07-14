@@ -25,8 +25,50 @@ Mark and Track targets OpenWrt **21.02 or newer** (nftables + conntrack). It shi
 | `kmod-nf-conntrack` | Stores marks per connection |
 | `jq` | Rule hit counters in the UI |
 | `lua`, `luci-lib-jsonc` | Connections UI backend |
+| `ca-bundle` | HTTPS fetch from GitHub (for the one-line installer) |
 
-### Method A — Build from source with the OpenWrt SDK (recommended)
+### Method A — One-line install (no build, recommended)
+
+Paste this into the router's shell (SSH). It downloads the latest tagged release straight from GitHub with `uclient-fetch`, installs dependencies, and starts the service — no SDK or `.ipk` needed. Re-running it updates an existing install (your `/etc/config/marktrack` is preserved).
+
+```sh
+REPO="xSandy03/marktrack"
+LATEST_TAG=$(uclient-fetch -O - https://api.github.com/repos/$REPO/releases/latest 2>/dev/null | grep -o '"tag_name":"[^"]*' | sed 's/"tag_name":"//')
+[ -z "$LATEST_TAG" ] && LATEST_TAG="v0.2"
+BASE="https://raw.githubusercontent.com/$REPO/$LATEST_TAG"
+
+# Dependencies
+opkg update
+opkg install nftables kmod-nf-conntrack jq lua luci-lib-jsonc ca-bundle
+
+# Backend (marktrack)
+mkdir -p /etc/marktrack.d
+uclient-fetch -O /etc/init.d/marktrack $BASE/etc/init.d/marktrack && chmod +x /etc/init.d/marktrack
+uclient-fetch -O /etc/marktrack.sh    $BASE/etc/marktrack.sh    && chmod +x /etc/marktrack.sh
+[ ! -f /etc/config/marktrack ] && uclient-fetch -O /etc/config/marktrack $BASE/etc/config/marktrack
+[ ! -f /etc/marktrack.d/custom_rules.nft ] && uclient-fetch -O /etc/marktrack.d/custom_rules.nft $BASE/etc/marktrack.d/custom_rules.nft
+
+# Frontend (luci-app-marktrack)
+mkdir -p /www/luci-static/resources/view/marktrack /usr/share/luci/menu.d /usr/share/rpcd/acl.d /usr/libexec/rpcd
+for f in connections custom_rules ipsets rules; do
+  uclient-fetch -O /www/luci-static/resources/view/marktrack/$f.js \
+    $BASE/luci-app-marktrack/htdocs/luci-static/resources/view/marktrack/$f.js
+done
+uclient-fetch -O /usr/share/luci/menu.d/luci-app-marktrack.json $BASE/luci-app-marktrack/root/usr/share/luci/menu.d/luci-app-marktrack.json
+uclient-fetch -O /usr/share/rpcd/acl.d/luci-app-marktrack.json  $BASE/luci-app-marktrack/root/usr/share/rpcd/acl.d/luci-app-marktrack.json
+uclient-fetch -O /usr/libexec/rpcd/luci.marktrack       $BASE/luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack       && chmod +x /usr/libexec/rpcd/luci.marktrack
+uclient-fetch -O /usr/libexec/rpcd/luci.marktrack_stats $BASE/luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack_stats && chmod +x /usr/libexec/rpcd/luci.marktrack_stats
+
+# Enable, start, and register the web UI
+/etc/init.d/marktrack enable
+/etc/init.d/marktrack start
+/etc/init.d/rpcd restart
+/etc/init.d/uhttpd restart
+```
+
+> **Note:** marktrack lives in a **single** repository, so every file above comes from `xSandy03/marktrack` (unlike QoSmate, which splits backend and LuCI into two repos). To pin a specific version instead of the latest, replace the `LATEST_TAG` line with e.g. `LATEST_TAG="v0.2"`.
+
+### Method B — Build from source with the OpenWrt SDK
 
 ```sh
 # 1. Get the SDK for your target/version from https://downloads.openwrt.org
@@ -45,7 +87,7 @@ scp bin/packages/*/base/marktrack_*.ipk bin/packages/*/base/luci-app-marktrack_*
 ssh root@192.168.1.1 'opkg install /tmp/marktrack_*.ipk /tmp/luci-app-marktrack_*.ipk'
 ```
 
-### Method B — Manual install (quick test / development)
+### Method C — Manual install (quick test / development)
 
 Run these from the repository root, pointing `ROUTER` at your device:
 
