@@ -14,28 +14,6 @@ var callInitAction = rpc.declare({
     expect: { result: false }
 });
 
-// In-page section navigation (avoids relying on the top menu bar)
-function renderSectionNav(active) {
-    var items = [
-        ['rules',        _('DSCP Rules')],
-        ['ipsets',       _('IP Sets')],
-        ['custom_rules', _('Custom Rules')],
-        ['connections',  _('Connections')]
-    ];
-    return E('div', { 'class': 'marktrack-nav', 'style': 'margin:0 0 1em 0; display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid rgba(128,128,128,0.25); padding-bottom:6px;' },
-        items.map(function(it) {
-            var isActive = (it[0] === active);
-            return E('a', {
-                'href': L.url('admin/marktrack', it[0]),
-                'style': 'display:inline-block; padding:6px 14px; border-radius:6px; text-decoration:none; font-size:0.95em; '
-                    + (isActive
-                        ? 'background:#0a84ff; color:#fff; font-weight:600;'
-                        : 'background:rgba(128,128,128,0.14); color:inherit;')
-            }, it[1]);
-        })
-    );
-}
-
 return view.extend({
     handleSaveApply: function(ev) {
         return this.handleSave(ev)
@@ -123,8 +101,6 @@ return view.extend({
         o.default = '1';
         o.rmempty = false;
 
-        return m.render().then(function(node) {
-            return E('div', {}, [ renderSectionNav('ipsets'), node ]);
-        });
+        return m.render();
     }
 });

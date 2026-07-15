@@ -30,6 +30,7 @@
 11. [Bugs Found & Historical Record](#11-bugs-found--historical-record)
 12. [Version 0.2 Changes](#12-version-02-changes)
 13. [Version 0.2.1 Changes](#13-version-021-changes)
+14. [Version 0.2.2 Changes](#14-version-022-changes)
 
 ---
 
@@ -80,8 +81,8 @@ marktrack is a focused fork of [QoSmate](https://github.com/hudra0/qosmate), str
 │           ▼                                                         │
 │  ┌──────────────────┐   ubus/rpcd        ┌─────────────────────┐  │
 │  │  luci.marktrack  │ ◀──────────────────│  LuCI Web UI        │  │
-│  │  (Lua rpcd)      │                    │  connections.js      │  │
-│  │                  │ ──JSON─────────────▶│  (polls every ~1s)  │  │
+│  │  (shell+awk rpcd)│                    │  connections.js      │  │
+│  │                  │ ──JSON─────────────▶│  (dropdown interval)│  │
 │  └──────────────────┘                    └─────────────────────┘  │
 │                                                                     │
 │  ┌──────────────────┐   ubus/rpcd        ┌─────────────────────┐  │
@@ -152,7 +153,7 @@ Incoming packet → netfilter hook (forward by default)
 ```
 Browser → ubus call luci.marktrack getConntrackDSCP
   │
-  └─ luci.marktrack (Lua)
+  └─ luci.marktrack (shell + awk)
        ├─ open /proc/net/nf_conntrack
        ├─ parse each line: proto, src, dst, sport, dport, bytes, packets, mark
        ├─ decode DSCP: dscp = mark & 0x3F  (strips marktrack bit 7)
@@ -493,7 +494,7 @@ Fields extracted by the parser and their destinations in the returned JSON:
 
 ### 5.7 LuCI Views
 
-All four views live under `admin/marktrack/` in the LuCI navigation.
+All four views live under **`admin/network/marktrack/`** — i.e. marktrack appears inside the **Network** menu, and its four sections render as LuCI's native content tabs (no separate top-level menu, no custom nav bar).
 
 #### `rules.js` — DSCP Rules
 
@@ -520,12 +521,13 @@ All four views live under `admin/marktrack/` in the LuCI navigation.
 
 #### `connections.js` — Live Connections
 
-- Uses **adaptive polling**: starts at 3s, reduces to 1s if response time <1000ms, increases up to 10s if response time >2000ms
-- **Bandwidth calculation:** Client-side delta between polls divided by elapsed time
-- **Rolling history:** Maintains last 10 samples per connection for avgPps, avgBps, maxPps
-- **Connection key:** `layer3 + protocol + src + sport + dst + dport` (uniquely identifies a flow)
-- **Filter:** Multi-token AND filter across protocol, src:sport, dst:dport, DSCP label
-- **Features:** Sortable columns, zoom levels, pause/resume, connection count limit dropdown
+- **Columns:** Protocol, Source, Destination, DSCP, **Transfer** (total bytes), Packets, Avg PPS, Avg BPS
+- **Polling:** fixed interval chosen from a dropdown (1 s / 3 s / 10 s / 30 s / 1 min, default 3 s) plus Pause/Resume — no adaptive logic
+- **Rate calculation:** per-connection **exponential moving average** (EMA) of pps/bps from the byte/packet delta between polls — cheap, no per-connection sample arrays
+- **Rendering:** rows are built into a single `DocumentFragment` and swapped in one `replaceChildren` call per poll (one reflow → smooth, low CPU)
+- **Memory:** per-connection rate state is dropped as soon as a flow disappears from conntrack
+- **Filter:** multi-token AND filter across protocol, src:sport, dst:dport, DSCP label
+- **Backend:** `luci.marktrack` (shell + awk); the view stops its timer when navigated away
 
 ---
 
@@ -557,14 +559,14 @@ All four views live under `admin/marktrack/` in the LuCI navigation.
 | write file | `/etc/marktrack.d/custom_rules.nft` |
 | write ubus | `luci:setInitAction` |
 
-**`luci-app-marktrack.json` (menu)** — registers four pages:
+**`luci-app-marktrack.json` (menu)** — registers marktrack **under the Network menu** (`admin/network/marktrack`, title `marktrack`, `firstchild`) with four child views that render as native tabs:
 
-| Page | Path | Order |
+| Menu node | View path | Order |
 |---|---|---|
-| DSCP Rules | `marktrack/rules` | 10 |
-| IP Sets | `marktrack/ipsets` | 20 |
-| Custom Rules | `marktrack/custom_rules` | 30 |
-| Connections | `marktrack/connections` | 40 |
+| `admin/network/marktrack/rules` | `marktrack/rules` | 10 |
+| `admin/network/marktrack/ipsets` | `marktrack/ipsets` | 20 |
+| `admin/network/marktrack/custom_rules` | `marktrack/custom_rules` | 30 |
+| `admin/network/marktrack/connections` | `marktrack/connections` | 40 |
 
 ---
 
@@ -1207,3 +1209,23 @@ Follow-up fixes after real-router testing (Cudy / OpenWrt 24.10, apk-based).
 | V021-02 | **Dependencies** | Removed `+lua +luci-lib-jsonc` from `luci-app-marktrack` Makefile and from the installer's dependency list (now just `nftables kmod-nf-conntrack jq ca-bundle`). |
 | V021-03 | **In-page navigation** | Added a section navigation bar rendered at the top of all four views (DSCP Rules / IP Sets / Custom Rules / Connections). Users can switch sections from within the page instead of the top menu bar; the active section is highlighted. |
 | V021-04 | **Installer** | Package-manager auto-detection (`apk` on 24.10+, `opkg` on 23.05 and older). |
+
+---
+
+## 14. Version 0.2.2 Changes
+
+UI simplification, navigation restructure, and performance pass on the Connections view.
+
+| ID | Area | Change |
+|---|---|---|
+| V022-01 | **Navigation** | marktrack moved into the **Network** menu (`admin/network/marktrack`) instead of a standalone top-level menu with its own dropdown. Its four sections render as LuCI's native content tabs. The custom in-page nav bar added in 0.2.1 was removed (redundant with native tabs; lighter). |
+| V022-02 | **Naming** | Menu title changed to `marktrack`. |
+| V022-03 | **Connections — columns** | Removed the **Max PPS** column; renamed **Bytes → Transfer** (shows total transferred, single value). Cells are now single values instead of split In/Out, reducing DOM nodes per row. |
+| V022-04 | **Connections — polling** | Replaced adaptive polling with a **Refresh interval dropdown** (1 s / 3 s / 10 s / 30 s / 1 min, default 3 s) plus Pause/Resume. |
+| V022-05 | **Connections — performance** | Rewrote the view to be lightweight: EMA-smoothed rates (no per-connection sample arrays), rows built in one `DocumentFragment` and swapped with a single `replaceChildren` per poll (one reflow), stale rate-state pruned when flows close, and the poll timer stops when the view is navigated away. |
+
+### Verification performed for 0.2.2
+
+- `connections.js` loaded into a stubbed environment: EMA rate calc, sort-by-column, multi-token filter, and full table render all verified (8 columns incl. Transfer, no Max PPS; correct row/cell counts).
+- All four JS views pass `node --check`; `menu.d` and `acl.d` JSON pass `jq empty`.
+- No remaining references to the removed custom nav.
