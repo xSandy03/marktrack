@@ -7,7 +7,6 @@ This project is a streamlined fork of the marking and tracking components from [
 ## Features
 
 - **DSCP Marking Rules**: Define per-flow packet marking rules based on Protocol, Source/Destination IPs, and Ports via standard UCI configuration.
-- **IP Sets**: Support for both static and dynamic IPv4/IPv6 sets (e.g., `gaming_devices`) that can be referenced in rules.
 - **Custom nftables Rules**: Directly inject raw `nftables` syntax for advanced marking logic.
 - **Conntrack Integration**: Automatically saves applied DSCP marks into the `ct mark` field, ensuring the mark persists for the lifetime of the connection.
 - **Live Connections UI**: A real-time LuCI dashboard showing all active connections, their decoded DSCP labels (e.g., `CS0`, `CS5`, `AF42`), and live bandwidth usage.
@@ -35,7 +34,7 @@ Paste this into the router's shell (SSH). It downloads the latest tagged release
 ```sh
 REPO="xSandy03/marktrack"
 LATEST_TAG=$(uclient-fetch -O - https://api.github.com/repos/$REPO/releases/latest 2>/dev/null | grep -o '"tag_name":"[^"]*' | sed 's/"tag_name":"//')
-[ -z "$LATEST_TAG" ] && LATEST_TAG="v0.2"
+[ -z "$LATEST_TAG" ] && LATEST_TAG="v0.3.1"
 BASE="https://raw.githubusercontent.com/$REPO/$LATEST_TAG"
 
 # Dependencies (auto-detects apk on OpenWrt 24.10+, opkg on 23.05 and older)
@@ -54,11 +53,14 @@ uclient-fetch -O /etc/marktrack.sh    $BASE/etc/marktrack.sh    && chmod +x /etc
 [ ! -f /etc/marktrack.d/custom_rules.nft ] && uclient-fetch -O /etc/marktrack.d/custom_rules.nft $BASE/etc/marktrack.d/custom_rules.nft
 
 # Frontend (luci-app-marktrack)
-mkdir -p /www/luci-static/resources/view/marktrack /usr/share/luci/menu.d /usr/share/rpcd/acl.d /usr/libexec/rpcd
-for f in connections custom_rules ipsets rules; do
+mkdir -p /www/luci-static/resources/view/marktrack /www/luci-static/resources/marktrack /usr/share/luci/menu.d /usr/share/rpcd/acl.d /usr/libexec/rpcd
+for f in connections custom_rules rules; do
   uclient-fetch -O /www/luci-static/resources/view/marktrack/$f.js \
     $BASE/luci-app-marktrack/htdocs/luci-static/resources/view/marktrack/$f.js
 done
+# Shared UI design system (CSS)
+uclient-fetch -O /www/luci-static/resources/marktrack/marktrack.css \
+  $BASE/luci-app-marktrack/htdocs/luci-static/resources/marktrack/marktrack.css
 uclient-fetch -O /usr/share/luci/menu.d/luci-app-marktrack.json $BASE/luci-app-marktrack/root/usr/share/luci/menu.d/luci-app-marktrack.json
 uclient-fetch -O /usr/share/rpcd/acl.d/luci-app-marktrack.json  $BASE/luci-app-marktrack/root/usr/share/rpcd/acl.d/luci-app-marktrack.json
 uclient-fetch -O /usr/libexec/rpcd/luci.marktrack       $BASE/luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack       && chmod +x /usr/libexec/rpcd/luci.marktrack
@@ -71,7 +73,7 @@ uclient-fetch -O /usr/libexec/rpcd/luci.marktrack_stats $BASE/luci-app-marktrack
 /etc/init.d/uhttpd restart
 ```
 
-> **Note:** marktrack lives in a **single** repository, so every file above comes from `xSandy03/marktrack` (unlike QoSmate, which splits backend and LuCI into two repos). To pin a specific version instead of the latest, replace the `LATEST_TAG` line with e.g. `LATEST_TAG="v0.2"`.
+> **Note:** marktrack lives in a **single** repository, so every file above comes from `xSandy03/marktrack` (unlike QoSmate, which splits backend and LuCI into two repos). To pin a specific version instead of the latest, replace the `LATEST_TAG` line with e.g. `LATEST_TAG="v0.3.1"`.
 
 ### Method B — Build from source with the OpenWrt SDK
 
@@ -110,12 +112,13 @@ scp etc/config/marktrack             $ROUTER:/etc/config/marktrack
 scp etc/marktrack.d/custom_rules.nft $ROUTER:/etc/marktrack.d/custom_rules.nft
 
 # LuCI frontend
-ssh $ROUTER 'mkdir -p /usr/libexec/rpcd /usr/share/luci/menu.d /usr/share/rpcd/acl.d /www/luci-static/resources/view/marktrack'
+ssh $ROUTER 'mkdir -p /usr/libexec/rpcd /usr/share/luci/menu.d /usr/share/rpcd/acl.d /www/luci-static/resources/view/marktrack /www/luci-static/resources/marktrack'
 scp luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack \
     luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack_stats        $ROUTER:/usr/libexec/rpcd/
 scp luci-app-marktrack/root/usr/share/luci/menu.d/luci-app-marktrack.json $ROUTER:/usr/share/luci/menu.d/
 scp luci-app-marktrack/root/usr/share/rpcd/acl.d/luci-app-marktrack.json  $ROUTER:/usr/share/rpcd/acl.d/
 scp luci-app-marktrack/htdocs/luci-static/resources/view/marktrack/*.js   $ROUTER:/www/luci-static/resources/view/marktrack/
+scp luci-app-marktrack/htdocs/luci-static/resources/marktrack/marktrack.css $ROUTER:/www/luci-static/resources/marktrack/
 
 # Permissions, enable, and start
 ssh $ROUTER 'chmod 755 /etc/marktrack.sh /etc/init.d/marktrack /usr/libexec/rpcd/luci.marktrack /usr/libexec/rpcd/luci.marktrack_stats'
@@ -132,6 +135,49 @@ nft list table inet marktrack           # inspect the applied ruleset
 
 Then open **LuCI → Network → Mark and Track** in your browser. For version-specific notes (21.02 / 22.03 / 23.05) and a deeper walkthrough, see [`DOCS.md`](DOCS.md).
 
+## Updating from a previous version
+
+Your `/etc/config/marktrack` is always preserved across updates.
+
+- **One-line install (Method A):** re-run the installer block above — it overwrites the backend, views, and CSS in place and restarts the service. Because **v0.3 removed the IP Sets feature**, also delete the now-unused view left behind by v0.2 and reload LuCI:
+  ```sh
+  rm -f /www/luci-static/resources/view/marktrack/ipsets.js
+  /etc/init.d/rpcd restart && /etc/init.d/uhttpd restart
+  ```
+- **Package install (Method B):** install the new `.ipk`s over the old ones (`opkg install --force-reinstall …`, or `apk add …`); the package manager removes `ipsets.js` for you.
+- **After any update:** hard-refresh the browser (Ctrl/Cmd-Shift-R) so the new CSS/JS load instead of cached copies.
+
+> **Migration note (→ v0.3):** IP Sets are gone. Any `config ipset` sections in your config are now ignored (harmless), but rules that referenced a set with `@setname` will no longer match — replace `@setname` with the literal IP list in that rule's Source/Destination IP field.
+
+## Uninstalling
+
+**Package install:**
+```sh
+apk del luci-app-marktrack marktrack       # OpenWrt 24.10+
+# or
+opkg remove luci-app-marktrack marktrack   # OpenWrt 23.05 and older
+```
+
+**One-line / manual install** (no package database — remove the files directly):
+```sh
+/etc/init.d/marktrack stop; /etc/init.d/marktrack disable
+nft delete table inet marktrack 2>/dev/null
+
+# Backend
+rm -f  /etc/init.d/marktrack /etc/marktrack.sh
+rm -rf /etc/marktrack.d /tmp/marktrack
+rm -f  /etc/config/marktrack            # drop this line to keep your config
+
+# Frontend
+rm -rf /www/luci-static/resources/view/marktrack /www/luci-static/resources/marktrack
+rm -f  /usr/libexec/rpcd/luci.marktrack /usr/libexec/rpcd/luci.marktrack_stats
+rm -f  /usr/share/luci/menu.d/luci-app-marktrack.json
+rm -f  /usr/share/rpcd/acl.d/luci-app-marktrack.json
+
+/etc/init.d/rpcd restart && /etc/init.d/uhttpd restart
+```
+Leaving `/etc/config/marktrack` in place lets a later reinstall pick up your old settings.
+
 ## Architecture & How It Works
 
 Mark and Track is composed of two packages:
@@ -140,7 +186,7 @@ Mark and Track is composed of two packages:
 
 ### 1. Packet Marking Pipeline (`marktrack.sh`)
 
-When the `marktrack` service starts, the `/etc/marktrack.sh` script reads the `/etc/config/marktrack` UCI configuration. It translates your IP sets, rules, and custom rules into a single `nftables` table named `marktrack`.
+When the `marktrack` service starts, the `/etc/marktrack.sh` script reads the `/etc/config/marktrack` UCI configuration. It translates your rules and custom rules into a single `nftables` table named `marktrack`.
 
 The generated `nftables` chain evaluates traffic at a configurable netfilter hook (default: `forward` at priority `0`). 
 
@@ -161,9 +207,8 @@ It reverses the encoding logic (`dscp = mark & 0x3F`) to extract the exact DSCP 
 
 ### 3. Web Interface (`luci-app-marktrack`)
 
-The frontend is built using LuCI's modern JavaScript framework. It provides four main pages under **Network > Mark and Track** (or your LuCI's equivalent submenu):
+The frontend is built using LuCI's modern JavaScript framework. It provides three main pages under **Network > Mark and Track** (or your LuCI's equivalent submenu):
 - **DSCP Rules**: A form to configure UCI rules. It polls the `luci.marktrack_stats` RPC endpoint to show live packet/byte hit counters next to each rule.
-- **IP Sets**: Define static or dynamic sets.
 - **Custom Rules**: A text editor for raw `nftables` rules with built-in syntax validation.
 - **Connections**: A live, sortable, and filterable table polling every second. It calculates live bandwidth client-side by comparing the byte counters between polls.
 
@@ -183,11 +228,13 @@ marktrack/
 │
 └── luci-app-marktrack/                     # Frontend Package
     ├── Makefile                            # OpenWrt package Makefile for the frontend
-    ├── htdocs/luci-static/resources/view/marktrack/
-    │   ├── connections.js                  # Live connection viewer UI
-    │   ├── custom_rules.js                 # Custom raw rules editor UI
-    │   ├── ipsets.js                       # IP sets editor UI
-    │   └── rules.js                        # DSCP Rules editor UI
+    ├── htdocs/luci-static/resources/
+    │   ├── view/marktrack/
+    │   │   ├── connections.js               # Live connection viewer UI
+    │   │   ├── custom_rules.js              # Custom raw rules editor UI
+    │   │   └── rules.js                     # DSCP Rules editor UI
+    │   └── marktrack/
+    │       └── marktrack.css                # Shared "network-ops console" UI theme
     └── root/
         ├── usr/libexec/rpcd/
         │   ├── luci.marktrack              # Lua backend: Parses nf_conntrack for the UI
@@ -220,14 +267,5 @@ config custom_rules 'custom_rules'  # Enables the inclusion of custom_rules.nft
 # 	option dest_port '30000-65535'
 # 	option class 'cs5'
 # 	option counter '1'
-# 	option enabled '1'
-
-# Example IP Set
-# config ipset
-# 	option name 'gaming_devices'
-# 	option mode 'static'
-# 	option family 'ipv4'
-# 	list ip4 '192.168.1.50'
-# 	list ip4 '192.168.1.51'
 # 	option enabled '1'
 ```

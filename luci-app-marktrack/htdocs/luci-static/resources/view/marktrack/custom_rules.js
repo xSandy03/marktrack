@@ -13,6 +13,15 @@ var callInitAction = rpc.declare({
     expect: { result: false }
 });
 
+// Inject the shared "network-ops console" design system once
+function injectCss() {
+    if (document.getElementById('marktrack-theme')) return;
+    document.head.appendChild(E('link', {
+        'id': 'marktrack-theme', 'rel': 'stylesheet', 'type': 'text/css',
+        'href': L.resource('marktrack/marktrack.css')
+    }));
+}
+
 return view.extend({
     handleSaveApply: function(ev) {
         return this.handleSave(ev)
@@ -106,7 +115,7 @@ return view.extend({
             '▼ ' + _('Show Examples') + '</button>' +
             '<div id="custom-example" class="cbi-section-node" style="display: none; margin-top: 8px;">' +
             '<strong>' + _('Example (chain statements):') + '</strong><br/>' +
-            '<pre style="background:rgba(255,255,255,0.1); border:1px solid rgba(128,128,128,0.3); padding:6px; margin:4px 0; border-radius:3px; font-size:11px; white-space:pre-wrap; font-family:monospace;">' +
+            '<pre class="mt-code">' +
             '# Mark VoIP (SIP) signaling as Expedited Forwarding\n' +
             'udp dport 5060 ip dscp set ef counter comment "SIP"\n\n' +
             '# Mark all HTTPS traffic as CS4\n' +
@@ -135,7 +144,7 @@ return view.extend({
         o.rawhtml = true;
         o.default = validationResult
             ? '<div class="cbi-section-node" style="margin-top: 8px; min-width: 700px;">' +
-                '<pre style="background:rgba(255,255,255,0.1); border:1px solid rgba(128,128,128,0.3); padding:6px; margin:4px 0; border-radius:3px; font-size:11px; white-space:pre-wrap; font-family:monospace;">' +
+                '<pre class="mt-code">' +
                 validationResult + '</pre></div>'
             : _('No validation performed yet');
 
@@ -174,7 +183,7 @@ return view.extend({
                     var validationResultElement = document.getElementById('cbid.marktrack.custom_rules._validation_result');
                     if (validationResultElement) {
                         validationResultElement.innerHTML = '<div class="cbi-section-node" style="margin-top: 8px; min-width: 700px;">' +
-                            '<pre style="background:rgba(255,255,255,0.1); border:1px solid rgba(128,128,128,0.3); padding:6px; margin:4px 0; border-radius:3px; font-size:11px; white-space:pre-wrap; font-family:monospace;">' +
+                            '<pre class="mt-code">' +
                             result + '</pre></div>';
                     }
                     ui.showModal(_('Finalizing Validation'), [
@@ -214,6 +223,10 @@ return view.extend({
             };
         }
 
-        return m.render();
+        return m.render().then(function(rendered) {
+            injectCss();
+            rendered.classList.add('mt-app');
+            return rendered;
+        });
     }
 });

@@ -21,6 +21,30 @@ var callRuleCounters = rpc.declare({
     expect: { rule_counters: [] }
 });
 
+// Inject the shared "network-ops console" design system once
+function injectCss() {
+    if (document.getElementById('marktrack-theme')) return;
+    document.head.appendChild(E('link', {
+        'id': 'marktrack-theme', 'rel': 'stylesheet', 'type': 'text/css',
+        'href': L.resource('marktrack/marktrack.css')
+    }));
+}
+
+// DSCP label → signal-hue token (see .mt-sig--* in marktrack.css)
+function dscpToken(label) {
+    switch ((label || '').toUpperCase()) {
+        case 'EF':   return 'ef';
+        case 'CS5':  return 'cs5';
+        case 'CS4': case 'AF41': case 'AF42': case 'AF43': return 'hi';
+        case 'CS3': case 'AF31': case 'AF32': case 'AF33': return 'stream';
+        case 'CS2': case 'AF21': case 'AF22': case 'AF23': return 'data';
+        case 'AF11': case 'AF12': case 'AF13': return 'afl';
+        case 'CS6': case 'CS7': return 'ctrl';
+        case 'CS1':  return 'cs1';
+        default:     return 'cs0';
+    }
+}
+
 // IPv6 suffix matching validation helpers
 function isIPv6SuffixFormat(value) {
     // Format: ::suffix/::mask - allow empty suffix/mask with * instead of +
@@ -90,16 +114,7 @@ function validateIPField(section_id, value) {
     
     for (var i = 0; i < values.length; i++) {
         var v = values[i].replace(/^!(?!=)/, '!=');
-        
-        // Check for set reference
-        if (v.startsWith('@') || v.startsWith('!=@')) {
-            var setName = v.replace(/^(!=)?@/, '');
-            if (!/^[a-zA-Z0-9_]+$/.test(setName)) {
-                return _('Invalid set name format. Must start with @ followed by letters, numbers, or underscore');
-            }
-            continue; // Don't check IP version for sets
-        } 
-        
+
         // Strip != prefix for validation
         var isNegated = v.startsWith('!=');
         var valueToValidate = isNegated ? v.substring(2) : v;
@@ -263,12 +278,12 @@ return view.extend({
     // Format counter display
     formatCounterDisplay: function(ruleName, counterEnabled) {
         if (counterEnabled !== '1') {
-            return E('span', {'style': 'color: #999; font-size: 0.9em;'}, '-');
+            return E('span', {'class': 'mt-activity mt-activity__off'}, '—');
         }
-        
+
         var stats = this.counterData[ruleName];
         if (!stats || stats.packets === 0) {
-            return E('span', {'style': 'color: #999; font-size: 0.9em;'}, _('no activity'));
+            return E('span', {'class': 'mt-activity mt-activity__off'}, _('no activity'));
         }
         
         var totalPackets = stats.packets;
@@ -330,26 +345,29 @@ return view.extend({
 
         s.tab('general', _('General Settings'));
 
-        // Simple DSCP reference — common classes, their decimal value, and typical use.
-        s.description = E('div', { 'class': 'cbi-section-descr' }, [
+        // DSCP reference — common classes as colored signal tags + typical use.
+        var DSCP_REF = [
+            ['EF',   '46', _('Voice / real-time (VoIP, gaming)')],
+            ['CS5',  '40', _('Signaling / high priority')],
+            ['CS4',  '32', _('Real-time interactive / video')],
+            ['AF41', '34', _('Multimedia conferencing')],
+            ['CS2',  '16', _('Network ops / low-latency data')],
+            ['CS1',  '8',  _('Background / bulk (lowest)')],
+            ['CS0',  '0',  _('Best effort (default, no priority)')]
+        ];
+        s.description = E('div', { 'class': 'cbi-section-descr mt-ref' }, [
             E('h4', _('DSCP Class Reference')),
-            E('table', { 'class': 'table' }, [
-                E('tr', { 'class': 'tr table-titles' }, [
-                    E('th', { 'class': 'th left', 'width': '20%' }, _('Class')),
-                    E('th', { 'class': 'th left', 'width': '15%' }, _('Value')),
-                    E('th', { 'class': 'th left' }, _('Typical Use'))
-                ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'EF'),  E('td', { 'class': 'td left' }, '46'), E('td', { 'class': 'td left' }, _('Voice / real-time (VoIP, gaming)')) ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS5'), E('td', { 'class': 'td left' }, '40'), E('td', { 'class': 'td left' }, _('Signaling / high priority')) ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS4'), E('td', { 'class': 'td left' }, '32'), E('td', { 'class': 'td left' }, _('Real-time interactive / video')) ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'AF41'), E('td', { 'class': 'td left' }, '34'), E('td', { 'class': 'td left' }, _('Multimedia conferencing')) ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS2'), E('td', { 'class': 'td left' }, '16'), E('td', { 'class': 'td left' }, _('Network operations / low latency data')) ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS0'), E('td', { 'class': 'td left' }, '0'),  E('td', { 'class': 'td left' }, _('Best effort (default, no priority)')) ]),
-                E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td left' }, 'CS1'), E('td', { 'class': 'td left' }, '8'),  E('td', { 'class': 'td left' }, _('Background / bulk (lowest priority)')) ])
-            ]),
-            E('p', { 'style': 'font-size:0.9em; margin: 6px 0 10px 2px;' }, [
-                _('Mark and Track only tags packets. Whether a DSCP value changes real priority depends on your QoS/shaper (e.g. SQM/CAKE) or upstream network honoring these values.')
-            ])
+            E('div', { 'class': 'mt-ref__grid' }, DSCP_REF.map(function(r) {
+                return E('div', { 'class': 'mt-ref__item mt-sig--' + dscpToken(r[0]) }, [
+                    E('span', { 'class': 'mt-tag' }, [
+                        E('span', { 'class': 'mt-tag__dot' }), r[0],
+                        E('span', { 'class': 'mt-tag__val' }, r[1])
+                    ]),
+                    E('span', { 'class': 'mt-ref__use' }, r[2])
+                ]);
+            })),
+            E('div', { 'class': 'mt-note' },
+                _('Mark and Track only tags packets. Whether a DSCP value changes real priority depends on your QoS/shaper (e.g. SQM/CAKE) or upstream network honoring these values.'))
         ]);
 
         o = s.taboption('general', form.Value, 'name', _('Name'));
@@ -419,7 +437,7 @@ return view.extend({
 
         o = s.taboption('general', form.DynamicList, 'src_ip', _('Source IP'));
         o.datatype = 'string';
-        o.placeholder = _('IP address, @setname or ::suffix/::mask');
+        o.placeholder = _('IP address or ::suffix/::mask');
         o.rmempty = true;
         o.validate = function(section_id, value) {
             return validateIPField(section_id, value);
@@ -461,7 +479,7 @@ return view.extend({
         
         o = s.taboption('general', form.DynamicList, 'dest_ip', _('Destination IP'));
         o.datatype = 'string';
-        o.placeholder = _('IP address, @setname or ::suffix/::mask');
+        o.placeholder = _('IP address or ::suffix/::mask');
         o.rmempty = true;
         o.validate = function(section_id, value) {
             return validateIPField(section_id, value);
@@ -558,9 +576,12 @@ return view.extend({
         this.gridSection = s;
         
         return m.render().then(function(rendered) {
+            injectCss();
+            rendered.classList.add('mt-app');
+
             // Store view instance globally for textvalue access
             document.marktrackRulesView = self;
-            
+
             // Start counter polling
             if (!self.pollHandler) {
                 self.startCounterPolling();

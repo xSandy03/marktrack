@@ -31,6 +31,8 @@
 12. [Version 0.2 Changes](#12-version-02-changes)
 13. [Version 0.2.1 Changes](#13-version-021-changes)
 14. [Version 0.2.2 Changes](#14-version-022-changes)
+15. [Version 0.3 Changes](#15-version-03-changes)
+16. [Version 0.3.1 Changes](#16-version-031-changes)
 
 ---
 
@@ -64,10 +66,10 @@ marktrack is a focused fork of [QoSmate](https://github.com/hudra0/qosmate), str
 │  │  (rule compiler) │                       │                    │  │
 │  └──────────────────┘                       │  chain marktrack   │  │
 │           │                                 │  hook: forward     │  │
-│           │ include                         │  ├─ IP sets        │  │
-│  ┌────────▼─────────┐                       │  ├─ DSCP rules     │  │
-│  │  custom_rules    │                       │  ├─ custom rules   │  │
-│  │  .nft            │                       │  └─ ct mark ← DSCP│  │
+│           │ include                         │  ├─ DSCP rules     │  │
+│  ┌────────▼─────────┐                       │  ├─ custom rules   │  │
+│  │  custom_rules    │                       │  └─ ct mark ← DSCP│  │
+│  │  .nft            │                       │                    │  │
 │  └──────────────────┘                       └────────┬───────────┘  │
 │                                                      │              │
 │                                              conntrack stores        │
@@ -109,10 +111,6 @@ marktrack is a focused fork of [QoSmate](https://github.com/hudra0/qosmate), str
        ├─ config_load 'marktrack'
        ├─ read settings: NFT_HOOK, NFT_PRIORITY
        │
-       ├─ create_nft_sets()
-       │    └─ foreach UCI ipset section → emit nft set { ... }
-       │       → write /tmp/marktrack_set_families (name → ipv4/ipv6 map)
-       │
        ├─ generate_dynamic_nft_rules()
        │    └─ foreach UCI rule section → create_nft_rule()
        │         ├─ separate IPs into v4/v6 buckets
@@ -126,7 +124,6 @@ marktrack is a focused fork of [QoSmate](https://github.com/hudra0/qosmate), str
        │
        └─ nft -f /tmp/marktrack/marktrack.nft
             └─ applies: table inet marktrack
-                 ├─ sets (IP groups)
                  └─ chain marktrack (hook forward priority 0)
                       ├─ iif "lo" accept
                       ├─ [UCI DSCP rules]
@@ -197,11 +194,13 @@ marktrack/
 │
 └── luci-app-marktrack/
     ├── Makefile                          — Frontend OpenWrt package definition
-    ├── htdocs/luci-static/resources/view/marktrack/
-    │   ├── connections.js               — Live connections dashboard
-    │   ├── custom_rules.js              — Raw nftables rule editor
-    │   ├── ipsets.js                    — IP set manager
-    │   └── rules.js                     — DSCP rule manager with live counters
+    ├── htdocs/luci-static/resources/
+    │   ├── view/marktrack/
+    │   │   ├── connections.js           — Live connections dashboard
+    │   │   ├── custom_rules.js          — Raw nftables rule editor
+    │   │   └── rules.js                 — DSCP rule manager with live counters
+    │   └── marktrack/
+    │       └── marktrack.css            — Shared "network-ops console" design system
     └── root/
         ├── usr/libexec/rpcd/
         │   ├── luci.marktrack           — Lua: conntrack parser → JSON
@@ -226,11 +225,9 @@ marktrack/
 
 | Function | Purpose |
 |---|---|
-| `create_nft_sets()` | Iterates `ipset` UCI sections → emits nft `set { }` declarations. Writes `/tmp/marktrack_set_families` (name→family lookup used later by rules). |
 | `generate_dynamic_nft_rules()` | Iterates `rule` UCI sections → calls `create_nft_rule()` for each. Skips if `global.enabled=0`. |
 | `create_nft_rule()` | The most complex function. Parses a single UCI rule, separates IPs into IPv4/IPv6 buckets, generates separate v4 and v6 nft match expressions, emits one or two `ip/ip6 dscp set <class>` rules. |
-| `gen_rule()` | Sub-function inside `create_nft_rule`. Builds a single nft match clause for a given prefix (`ip saddr`, `th dport`, etc.) from a list of values. Handles set references (`@setname`), negation (`!=`), IPv6 suffix masks (`::suffix/::mask`), and mixed IP lists. |
-| `is_set_ref()` | Returns true if value starts with `@`. |
+| `gen_rule()` | Sub-function inside `create_nft_rule`. Builds a single nft match clause for a given prefix (`ip saddr`, `th dport`, etc.) from a list of values. Handles negation (`!=`), IPv6 suffix masks (`::suffix/::mask`), and mixed IP lists. |
 | `is_ipv6_mask()` | Returns true if value matches `::X/::Y` format. |
 | `is_ipv6()` | Returns true if value contains `:` (IPv6 or CIDR). |
 | `separate_ips_by_family()` | Splits a space-separated IP list into two output variables: IPv4 bucket and IPv6 bucket. |
@@ -258,18 +255,11 @@ config settings 'settings'
     option NFT_HOOK 'forward'
     option NFT_PRIORITY '0'
 
-config ipset
-    option name 'gaming_devices'
-    option mode 'static'
-    option family 'ipv4'
-    list ip4 '192.168.1.50'
-    list ip4 '192.168.1.51'
-    option enabled '1'
-
 config rule 'gaming'
     option name 'gaming'
     option proto 'udp'
-    option src_ip '@gaming_devices'
+    list src_ip '192.168.1.50'
+    list src_ip '192.168.1.51'
     option dest_port '27000-65535'
     option class 'cs5'
     option counter '1'
@@ -284,14 +274,12 @@ delete table inet marktrack
 
 table inet marktrack {
 
-    set gaming_devices { type ipv4_addr; flags interval; elements = { 192.168.1.50,192.168.1.51 }; }
-
     chain marktrack {
         type filter hook forward priority 0; policy accept;
 
         iif "lo" accept;
 
-        meta l4proto udp @gaming_devices th dport { 27000-65535 } ip dscp set cs5 counter comment "ipv4_gaming";
+        meta l4proto udp ip saddr { 192.168.1.50,192.168.1.51 } th dport { 27000-65535 } ip dscp set cs5 counter comment "ipv4_gaming";
 
         ct mark set ip  dscp or 128 counter;
         ct mark set ip6 dscp or 128 counter;
@@ -301,7 +289,7 @@ table inet marktrack {
 
 Key translation rules:
 - `proto udp` → `meta l4proto udp`
-- `src_ip '@gaming_devices'` → `ip saddr @gaming_devices` (family resolved from `/tmp/marktrack_set_families`)
+- `src_ip '192.168.1.50' '192.168.1.51'` → `ip saddr { 192.168.1.50,192.168.1.51 }` (family detected per address)
 - `dest_port '27000-65535'` → `th dport { 27000-65535 }`
 - `class 'cs5'` → `ip dscp set cs5`
 - `counter '1'` → appends `counter`
@@ -318,7 +306,7 @@ Key translation rules:
 | Command | Behavior |
 |---|---|
 | `start` | Checks `global.enabled`, execs `marktrack.sh`, registers one-shot procd instance (using `/bin/true` as the command — keeps procd satisfied while the real work is done by the shell script). |
-| `stop` | Runs `nft delete table inet marktrack` (idempotent, ignores error if table absent), cleans `/tmp/marktrack_set_families`. |
+| `stop` | Runs `nft delete table inet marktrack` (idempotent, ignores error if table absent). |
 | `reload` | Calls `stop_service` then `start_service`. |
 | `validate_custom_rules` | Wraps `custom_rules.nft` in a dummy table/chain, runs `nft --check --file`, reports OK or errors to stdout. |
 | `health_check` | Verifies: (1) table exists, (2) marktrack chain present, (3) `ct mark set` rule present, (4) reports active DSCP rule count. |
@@ -352,25 +340,13 @@ Three section types exist:
 | `name` | string | yes | Human-readable name; used as nft rule comment (`ipv4_<name>` / `ipv6_<name>`) |
 | `enabled` | bool | — | Default `1`. Set `0` to disable without deleting |
 | `proto` | string | — | Protocol(s): `tcp`, `udp`, `icmp`, `ipv6-icmp` (space-separated) |
-| `src_ip` | list | — | Source IP(s)/CIDR(s), `@setname`, or `::suffix/::mask`. Prefix with `!=` to negate |
+| `src_ip` | list | — | Source IP(s)/CIDR(s), or `::suffix/::mask`. Prefix with `!=` to negate |
 | `dest_ip` | list | — | Destination IP(s)/CIDR(s) (same formats as src_ip) |
 | `src_port` | list | — | Source port(s) or ranges (e.g., `80`, `8000-9000`) |
 | `dest_port` | list | — | Destination port(s) or ranges |
 | `class` | string | yes | DSCP class: `ef`, `cs5`, `cs4`, `af41`, `af42`, `cs2`, `cs1`, `cs0`, etc. |
 | `counter` | bool | — | If `1`, adds `counter` to the nft rule → enables live hit counters in UI |
 | `trace` | bool | — | If `1`, adds `meta nftrace set 1` → enables nft tracing for this rule (debug only) |
-
-**`config ipset`**
-
-| Option | Type | Meaning |
-|---|---|---|
-| `name` | string | Set name (referenced as `@name` in rules) |
-| `mode` | `static`\|`dynamic` | Static = fixed IPs; Dynamic = IPs added at runtime (e.g., by other scripts) |
-| `family` | `ipv4`\|`ipv6` | Address family |
-| `ip4` | list | IPv4 addresses/CIDRs (static mode, ipv4 family) |
-| `ip6` | list | IPv6 addresses/CIDRs (static mode, ipv6 family) |
-| `timeout` | string | Expiry for dynamic sets (e.g., `1h`, `30m`) |
-| `enabled` | bool | Default `1` |
 
 ---
 
@@ -494,22 +470,18 @@ Fields extracted by the parser and their destinations in the returned JSON:
 
 ### 5.7 LuCI Views
 
-All four views live under **`admin/network/marktrack/`** — i.e. marktrack appears inside the **Network** menu, and its four sections render as LuCI's native content tabs (no separate top-level menu, no custom nav bar).
+All three views live under **`admin/network/marktrack/`** — i.e. marktrack appears inside the **Network** menu, and its three sections render as LuCI's native content tabs (no separate top-level menu, no custom nav bar).
+
+**Shared design system — `resources/marktrack/marktrack.css`:** All three views share one stylesheet, loaded once via an injected `<link>` (a small idempotent `injectCss()` helper in each view; the `<link>` is cached by the browser after first load). It defines a self-contained dark "network-ops console" theme, **scoped entirely under `.mt-app`** so it never leaks into the rest of the LuCI admin skin. Each view wraps its root node in `<div class="mt-app">`. The single accent, the surface colors, and the per-class **DSCP signal hues** (`.mt-sig--ef`, `.mt-sig--cs5`, …, which set a `--sig` CSS variable consumed by both the DSCP tags and the transfer bars) all live here — so re-theming means editing one file. No web fonts or external assets are referenced (system font stack only), keeping it offline-safe and light on low-spec hardware.
 
 #### `rules.js` — DSCP Rules
 
-- Renders a `form.GridSection` over all `rule` UCI sections
-- Tabs: **General Settings** (name, proto, src/dest IP, ports, class, counter, trace, enabled) and **DSCP Mapping** (reference table for HFSC/CAKE)
-- **Live counters:** Polls `luci.marktrack_stats` every 8 seconds, updates an "Activity" `DummyValue` column with packet counts
+- Renders a `form.GridSection` over all `rule` UCI sections, wrapped in the themed `.mt-app` panel
+- **DSCP Class Reference:** rendered as colored **signal-tag cards** (`.mt-ref`) — each class shown as its tag + typical use — instead of a plain table
+- **Live counters:** Polls `luci.marktrack_stats` every 8 seconds, updates an "Activity" column (`.mt-activity`) with packet counts
 - **Save & Apply:** Saves UCI → applies changes → restarts marktrack service
-- **IP validation:** Validates IPv4/IPv6/CIDR, `@setname` references, `::suffix/::mask` format, negation prefix `!=`
+- **IP validation:** Validates IPv4/IPv6/CIDR, `::suffix/::mask` format, negation prefix `!=`
 - **Multi-protocol:** Proto field is a `MultiValue`, stored as space-separated string in UCI
-
-#### `ipsets.js` — IP Sets
-
-- Renders a `form.GridSection` over all `ipset` UCI sections
-- Fields: name, mode (static/dynamic), family (ipv4/ipv6), ip4 list, ip6 list, timeout (dynamic only), enabled
-- Conditional fields: ip4/ip6 lists only shown for static mode; timeout only for dynamic
 
 #### `custom_rules.js` — Custom Rules
 
@@ -521,8 +493,10 @@ All four views live under **`admin/network/marktrack/`** — i.e. marktrack appe
 
 #### `connections.js` — Live Connections
 
-- **Columns:** Protocol, Source, Destination, DSCP, **Transfer** (total bytes), Packets, Avg PPS, Avg BPS
-- **Polling:** fixed interval chosen from a dropdown (1 s / 3 s / 10 s / 30 s / 1 min, default 3 s) plus Pause/Resume — no adaptive logic
+- **Layout:** a fully custom `.mt-app` dashboard — title bar with a live/paused status dot, a row of **stat chips** (active flows, aggregate throughput, marked count, top DSCP class), a toolbar, then the flow table
+- **DSCP as signal tags:** each row's class renders as a colored `.mt-tag`; the row carries a `.mt-sig--<token>` class so the tag **and** the mini **transfer bar** (`.mt-bar`, width ∝ share of the largest flow) share one hue
+- **Columns:** Protocol, Source, Destination, DSCP, **Transfer** (bar + total bytes), Packets, Avg PPS, Avg BPS — all sortable
+- **Polling:** fixed interval chosen from a **segmented control** (1 s / 3 s / 10 s / 30 s / 1 min, default 3 s) plus Pause/Resume — no adaptive logic
 - **Rate calculation:** per-connection **exponential moving average** (EMA) of pps/bps from the byte/packet delta between polls — cheap, no per-connection sample arrays
 - **Rendering:** rows are built into a single `DocumentFragment` and swapped in one `replaceChildren` call per poll (one reflow → smooth, low CPU)
 - **Memory:** per-connection rate state is dropped as soon as a flow disappears from conntrack
@@ -541,8 +515,8 @@ All four views live under **`admin/network/marktrack/`** — i.e. marktrack appe
 
 **`luci-app-marktrack/Makefile`** — Frontend package:
 - Uses `luci.mk` build system
-- Runtime deps: `marktrack`, `lua`, `luci-lib-jsonc`, `jq`
-- Installs: menu JSON, ACL JSON, two rpcd scripts (executable), four JS view files
+- Runtime deps: `marktrack`, `jq`
+- Installs: menu JSON, ACL JSON, two rpcd scripts (executable), three JS view files, and the shared `marktrack.css` design system
 
 ---
 
@@ -559,12 +533,11 @@ All four views live under **`admin/network/marktrack/`** — i.e. marktrack appe
 | write file | `/etc/marktrack.d/custom_rules.nft` |
 | write ubus | `luci:setInitAction` |
 
-**`luci-app-marktrack.json` (menu)** — registers marktrack **under the Network menu** (`admin/network/marktrack`, title `marktrack`, `firstchild`) with four child views that render as native tabs:
+**`luci-app-marktrack.json` (menu)** — registers marktrack **under the Network menu** (`admin/network/marktrack`, title `marktrack`, `firstchild`) with three child views that render as native tabs:
 
 | Menu node | View path | Order |
 |---|---|---|
 | `admin/network/marktrack/rules` | `marktrack/rules` | 10 |
-| `admin/network/marktrack/ipsets` | `marktrack/ipsets` | 20 |
 | `admin/network/marktrack/custom_rules` | `marktrack/custom_rules` | 30 |
 | `admin/network/marktrack/connections` | `marktrack/connections` | 40 |
 
@@ -733,7 +706,8 @@ ssh $ROUTER "mkdir -p \
   /usr/libexec/rpcd \
   /usr/share/luci/menu.d \
   /usr/share/rpcd/acl.d \
-  /www/luci-static/resources/view/marktrack"
+  /www/luci-static/resources/view/marktrack \
+  /www/luci-static/resources/marktrack"
 
 scp luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack \
     luci-app-marktrack/root/usr/libexec/rpcd/luci.marktrack_stats \
@@ -747,6 +721,9 @@ scp luci-app-marktrack/root/usr/share/rpcd/acl.d/luci-app-marktrack.json \
 
 scp luci-app-marktrack/htdocs/luci-static/resources/view/marktrack/*.js \
     $ROUTER:/www/luci-static/resources/view/marktrack/
+
+scp luci-app-marktrack/htdocs/luci-static/resources/marktrack/marktrack.css \
+    $ROUTER:/www/luci-static/resources/marktrack/
 
 ssh $ROUTER "chmod 755 /usr/libexec/rpcd/luci.marktrack /usr/libexec/rpcd/luci.marktrack_stats"
 ```
@@ -823,6 +800,75 @@ cat /proc/net/nf_conntrack | awk '{for(i=1;i<=NF;i++) if($i~/mark=/) print $i}' 
 
 ---
 
+### 8.6 Updating From a Previous Version
+
+marktrack keeps all state in `/etc/config/marktrack`; every update path below preserves it.
+
+| Install method | How to update | Notes |
+|---|---|---|
+| One-line (`uclient-fetch`) | Re-run the installer block from the README | Overwrites backend + views + `marktrack.css` and restarts the service; only fetches `/etc/config/marktrack` if it is missing |
+| SDK / IPK | `opkg install --force-reinstall ./luci-app-marktrack_*.ipk ./marktrack_*.ipk` (or `apk add`) | The package manager adds/removes files (e.g. drops `ipsets.js`) automatically |
+| Manual (`scp`) | Re-copy the files with the same `scp` commands | Remember the new `resources/marktrack/marktrack.css` |
+
+**Stale-file cleanup (updating from ≤ 0.2 by hand):** the one-line and manual methods only *write* files — they never delete files a newer version dropped. After updating from 0.2, remove the obsolete IP Sets view and reload LuCI:
+```bash
+rm -f /www/luci-static/resources/view/marktrack/ipsets.js
+/etc/init.d/rpcd restart && /etc/init.d/uhttpd restart
+```
+(IPK updates handle this automatically.)
+
+**Browser cache:** the JS views and `marktrack.css` are static assets the browser caches aggressively. After any update, hard-refresh (Ctrl/Cmd-Shift-R) or the previous UI may persist.
+
+**Config migration 0.2 → 0.3 (IP Sets removed):**
+- `config ipset` sections are now ignored — harmless; leave or delete them.
+- Rules whose `src_ip`/`dest_ip` used `@setname` will no longer match. Replace the `@setname` entry with the literal IP/CIDR list (an IP field accepts multiple values), e.g. `@gaming_devices` → `192.168.1.50 192.168.1.51`.
+- `settings`, `global`, and `rule` section shapes are otherwise unchanged.
+
+Run `/etc/init.d/marktrack health_check` afterward to confirm the table, chain, and ct-mark rule are present.
+
+---
+
+### 8.7 Uninstalling
+
+**IPK / package install:**
+```bash
+apk del luci-app-marktrack marktrack       # OpenWrt 24.10+ (apk)
+opkg remove luci-app-marktrack marktrack   # OpenWrt 23.05 and older (opkg)
+```
+Package removal leaves `/etc/config/marktrack` (a conffile) in place; delete it manually for a clean slate: `rm -f /etc/config/marktrack`.
+
+**One-line / manual install** (no package database — remove the files directly):
+```bash
+# 1. Stop the service and tear down the nftables table
+/etc/init.d/marktrack stop
+/etc/init.d/marktrack disable
+nft delete table inet marktrack 2>/dev/null
+
+# 2. Backend
+rm -f  /etc/init.d/marktrack /etc/marktrack.sh
+rm -rf /etc/marktrack.d /tmp/marktrack
+rm -f  /etc/config/marktrack            # omit to keep your configuration
+
+# 3. Frontend (LuCI app)
+rm -rf /www/luci-static/resources/view/marktrack
+rm -rf /www/luci-static/resources/marktrack
+rm -f  /usr/libexec/rpcd/luci.marktrack /usr/libexec/rpcd/luci.marktrack_stats
+rm -f  /usr/share/luci/menu.d/luci-app-marktrack.json
+rm -f  /usr/share/rpcd/acl.d/luci-app-marktrack.json
+rm -f  /tmp/marktrack_custom_rules_validation.txt
+
+# 4. Re-register rpcd + LuCI so the menu entry disappears
+/etc/init.d/rpcd restart
+/etc/init.d/uhttpd restart
+```
+
+**Verify removal:**
+```bash
+nft list table inet marktrack 2>&1     # → "No such file or directory" = gone
+```
+
+---
+
 ## 9. Configuration Reference
 
 ### 9.1 Quick-Start Example
@@ -858,19 +904,11 @@ config rule 'streaming'
     option counter '1'
     option enabled '1'
 
-# IP set for all gaming devices
-config ipset
+# Mark a group of gaming devices as CS5 (list multiple source IPs)
+config rule 'gaming_devices'
     option name 'gaming_devices'
-    option mode 'static'
-    option family 'ipv4'
-    list ip4 '192.168.1.50'
-    list ip4 '192.168.1.51'
-    option enabled '1'
-
-# Reference the IP set in a rule
-config rule 'gaming_set'
-    option name 'gaming_set'
-    option src_ip '@gaming_devices'
+    list src_ip '192.168.1.50'
+    list src_ip '192.168.1.51'
     option class 'cs5'
     option counter '1'
     option enabled '1'
@@ -903,9 +941,9 @@ Use this table before making any modification. It maps what you change to everyt
 
 | You want to… | Files to change | What to watch for |
 |---|---|---|
-| **Add a new DSCP class** (e.g., `le`) | `rules.js` (`ListValue` values list) · `luci.marktrack` (`dscp_to_label` map) · `connections.js` (`dscpMap` object) | All three DSCP maps must stay in sync — Lua backend, JS connections view, and JS rules view each have their own copy |
+| **Add a new DSCP class** (e.g., `le`) | `rules.js` (`ListValue` values + `dscpToken`) · `luci.marktrack` (`dscp_to_label` map) · `connections.js` (`DSCP_MAP` + `dscpToken`) · `marktrack.css` (a `.mt-sig--<token>` hue) | The DSCP label maps, the `dscpToken()` copies in both JS views, and the signal-hue class must all agree — otherwise the class shows an uncolored/fallback tag |
+| **Re-theme / restyle the UI** | `marktrack.css` only | Everything visual (colors, accent, DSCP signal hues via `--sig`, spacing, tags, bars) lives in this one scoped stylesheet; the three views just emit `.mt-*` class names |
 | **Add a new rule match field** (e.g., `ct state`) | `marktrack.sh` (`create_nft_rule` — add match generation) · `etc/config/marktrack` (document new option) · `rules.js` (add form field) | The shell rule builder in `marktrack.sh` and the UCI form in `rules.js` must both know about the new field |
-| **Add a new nft set type** (e.g., `mac` addresses) | `marktrack.sh` (`create_nft_sets` — add type handling) · `marktrack_set_families` temp file format (if new family type) · `ipsets.js` (form options) | The set family lookup in `gen_rule()` uses `/tmp/marktrack_set_families`; only `ipv4`/`ipv6` values are understood there |
 | **Add a new conntrack field to the UI** (e.g., interface, state) | `luci.marktrack` (parse field from `/proc/net/nf_conntrack`, add to returned JSON) · `connections.js` (add table column, update sort function, update connection key if needed) | See conntrack line format in §5.5 for available fields |
 | **Add a new rpcd method** | `luci.marktrack` or `luci.marktrack_stats` (implement method) · `luci-app-marktrack.json` (ACL — add ubus read permission) · relevant JS view (declare with `rpc.declare`, call it) | rpcd must be restarted after changing scripts: `/etc/init.d/rpcd restart` |
 | **Change the ct mark encoding** (e.g., use different flag bit) | `marktrack.sh` (the two `ct mark set` lines) · `luci.marktrack` (`dscp_num = mark % 64` decode logic) · `connections.js` (`dscpToString` uses `mark & 0x3F`) | All three must use the same encode/decode scheme |
@@ -1229,3 +1267,47 @@ UI simplification, navigation restructure, and performance pass on the Connectio
 - `connections.js` loaded into a stubbed environment: EMA rate calc, sort-by-column, multi-token filter, and full table render all verified (8 columns incl. Transfer, no Max PPS; correct row/cell counts).
 - All four JS views pass `node --check`; `menu.d` and `acl.d` JSON pass `jq empty`.
 - No remaining references to the removed custom nav.
+
+---
+
+## 15. Version 0.3 Changes
+
+The **IP Sets** feature was removed entirely. marktrack no longer manages `nftables` named sets; rules match on literal IPs/CIDRs (a rule's `src_ip`/`dest_ip` can still list multiple addresses), IPv6 suffix masks (`::suffix/::mask`), and negation (`!=`) exactly as before.
+
+| ID | Area | Change |
+|---|---|---|
+| V03-01 | **Backend** | Removed `create_nft_sets()`, the `is_set_ref()` / `get_set_family()` helpers, the `@setname` branches in `separate_ips_by_family()` and `gen_rule()`, the `SETS` generation, and the `${SETS}` emission block in the generated `nftables` table (`marktrack.sh`). No more `/tmp/marktrack_set_families` temp file. |
+| V03-02 | **Init script** | Dropped the `rm -f /tmp/marktrack_set_families` cleanup from `stop_service` (`init.d/marktrack`). |
+| V03-03 | **UCI config** | Removed the commented `config ipset` example from `etc/config/marktrack`. Existing `ipset` sections in a user's config are simply ignored. |
+| V03-04 | **Frontend** | Deleted `ipsets.js`; removed its menu entry (`admin/network/marktrack/ipsets`) and its `INSTALL_DATA` line from the LuCI Makefile. The app now ships **three** views (DSCP Rules, Custom Rules, Connections). |
+| V03-05 | **Rules view** | Removed `@setname` validation from `rules.js`; the Source/Destination IP placeholders now read `IP address or ::suffix/::mask`. |
+| V03-06 | **Docs** | Reconciled `README.md` and `DOCS.md` (architecture diagram, data flow, file map, component deep-dives, config reference, and change-impact table) to match the set-free codebase. Historical records in §11–§14 are retained as written. |
+
+### Verification performed for 0.3
+
+- `marktrack.sh` and `init.d/marktrack` pass `sh -n`.
+- All three JS views pass `node --check`; `menu.d` and `acl.d` JSON pass `jq empty`.
+- Repository-wide grep confirms no residual `ipset` / set-reference identifiers remain in code (documentation history excepted).
+
+---
+
+## 16. Version 0.3.1 Changes
+
+A full UI redesign giving marktrack its own visual identity — a self-contained dark **"network-ops console"** — distinct from the stock LuCI admin skin and from its QoSmate origins. No backend, rpcd, ACL, or polling behavior changed; this is purely presentation.
+
+**Design intent:** fit the feature (DSCP tag-and-track), read clearly at a glance, and stay light on low-spec OpenWrt hardware.
+
+| ID | Area | Change |
+|---|---|---|
+| V031-01 | **Design system** | New shared stylesheet `htdocs/luci-static/resources/marktrack/marktrack.css`, loaded once via an injected `<link>`. Everything is scoped under `.mt-app` (no leakage into the wider LuCI theme). Tokens: dark surfaces, one cyan-green accent, monospace for machine values, and nine **DSCP signal hues** exposed as `.mt-sig--*` → `--sig`. |
+| V031-02 | **Connections** | Rebuilt as a console dashboard: title bar + live/paused status dot, **stat chips** (active flows, throughput, marked, top class), colored **DSCP signal tags**, per-row **transfer bars** (hue shared with the tag, width ∝ share of the largest flow), and a **segmented** refresh control. Kept the existing single-`replaceChildren`-per-poll render and EMA rate math. |
+| V031-03 | **Rules** | Form wrapped in the themed panel; the DSCP Class Reference is now colored **signal-tag cards**; the live Activity cell uses theme classes instead of inline colors. All form logic unchanged. |
+| V031-04 | **Custom Rules** | Wrapped in the themed panel; example and validation blocks now use the shared `.mt-code` / callout styling instead of inline `rgba()` styles. |
+| V031-05 | **Packaging & installer** | `marktrack.css` added to the LuCI Makefile install, the one-line installer (`uclient-fetch`), and both manual-install guides. |
+| V031-06 | **Low-resource pass** | No web fonts or external assets (system font stack); router serves the ~one static CSS file once (then browser-cached) and does no extra work — same rpcd calls, same 3 s/8 s poll cadence. Per-row glows and the bar transition were dropped and the live-dot pulse switched to a compositor-only opacity animation (gated by `prefers-reduced-motion`) to keep client repaint cheap. |
+
+### Verification performed for 0.3.1
+
+- All three JS views pass `node --check`; `menu.d` and `acl.d` JSON pass `jq empty`.
+- `marktrack.css` brace/paren balance checked; all generic and LuCI-class selectors (`input`, `.table`, `.btn`, `.cbi-*`) are `.mt-app`-scoped and component styles use unique `.mt-*` names, so nothing leaks into the wider admin skin; a `@supports` fallback covers engines without `color-mix()`.
+- Confirmed no new rpcd methods, ACL entries, or polling — router-side load is unchanged from 0.3.

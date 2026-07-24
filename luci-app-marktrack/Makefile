@@ -24,7 +24,7 @@ endef
 
 define Package/luci-app-marktrack/description
   LuCI web interface for Mark and Track.
-  Provides pages for managing DSCP marking rules, IP sets,
+  Provides pages for managing DSCP marking rules,
   custom nftables rules, and a live connection viewer
   showing per-connection DSCP marks and bandwidth.
 endef
@@ -34,6 +34,7 @@ define Package/luci-app-marktrack/install
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
 	$(INSTALL_DIR) $(1)/htdocs/luci-static/resources/view/marktrack
+	$(INSTALL_DIR) $(1)/htdocs/luci-static/resources/marktrack
 
 	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-marktrack.json \
 		$(1)/usr/share/luci/menu.d/
@@ -49,10 +50,11 @@ define Package/luci-app-marktrack/install
 		$(1)/htdocs/luci-static/resources/view/marktrack/
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/marktrack/rules.js \
 		$(1)/htdocs/luci-static/resources/view/marktrack/
-	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/marktrack/ipsets.js \
-		$(1)/htdocs/luci-static/resources/view/marktrack/
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/marktrack/custom_rules.js \
 		$(1)/htdocs/luci-static/resources/view/marktrack/
+
+	$(INSTALL_DATA) ./htdocs/luci-static/resources/marktrack/marktrack.css \
+		$(1)/htdocs/luci-static/resources/marktrack/
 endef
 
 $(eval $(call BuildPackage,luci-app-marktrack))

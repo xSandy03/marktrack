@@ -14,14 +14,6 @@
       "path": "marktrack/rules"
     }
   },
-  "admin/network/marktrack/ipsets": {
-    "title": "IP Sets",
-    "order": 20,
-    "action": {
-      "type": "view",
-      "path": "marktrack/ipsets"
-    }
-  },
   "admin/network/marktrack/custom_rules": {
     "title": "Custom Rules",
     "order": 30,

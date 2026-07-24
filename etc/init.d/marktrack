@@ -92,7 +92,6 @@ start_service() {
 stop_service() {
     log_msg "Stopping Mark and Track..."
     nft delete table inet marktrack 2>/dev/null || true
-    rm -f /tmp/marktrack_set_families
     log_msg "marktrack nftables table removed."
 }
 

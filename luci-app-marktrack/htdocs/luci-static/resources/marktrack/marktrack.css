@@ -1,0 +1,569 @@
+/*
+ * marktrack — "Network-ops console" design system
+ * ------------------------------------------------------------------
+ * Everything is scoped under `.mt-app` so these rules never leak into
+ * the rest of the LuCI admin theme. Each view wraps its content in a
+ * <div class="mt-app"> and this file is loaded once via <link>.
+ *
+ * Design language: a self-contained dark telemetry panel. Monospace
+ * for all machine values (IPs, ports, counters), a single cyan-green
+ * "signal" accent, and DSCP classes rendered as colored signal tags
+ * whose hue also drives the per-row transfer bars.
+ *
+ * DSCP hue is passed in per element as the CSS var --sig (see the
+ * .mt-sig--* helpers at the bottom); tags and bars both read it, so a
+ * flow's priority reads as one consistent color across the row.
+ */
+
+.mt-app {
+    /* Surfaces */
+    --mt-bg:        #0d1117;
+    --mt-panel:     #121a24;
+    --mt-panel-2:   #0f1620;
+    --mt-raised:    #17212e;
+    --mt-line:      rgba(255, 255, 255, 0.08);
+    --mt-line-2:    rgba(255, 255, 255, 0.14);
+
+    /* Text */
+    --mt-fg:        #e6edf3;
+    --mt-fg-dim:    #9fb0c0;
+    --mt-fg-mute:   #6b7a8b;
+
+    /* Brand / signal accent */
+    --mt-accent:    #34e2b4;
+    --mt-accent-2:  #3fb6ff;
+    --mt-accent-dim: rgba(52, 226, 180, 0.14);
+
+    /* State */
+    --mt-danger:    #ff5c7a;
+    --mt-warn:      #ffb454;
+    --mt-ok:        #34e2b4;
+
+    --mt-radius:    12px;
+    --mt-radius-sm: 8px;
+    --mt-mono:      ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+    --mt-sans:      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    background:
+        radial-gradient(1200px 400px at 100% -10%, rgba(63, 182, 255, 0.06), transparent 60%),
+        radial-gradient(900px 400px at -10% 0%, rgba(52, 226, 180, 0.06), transparent 55%),
+        var(--mt-bg);
+    color: var(--mt-fg);
+    font-family: var(--mt-sans);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius);
+    padding: 18px 18px 22px;
+    margin: 0 0 1em;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.mt-app * { box-sizing: border-box; }
+
+/* ── Title bar ─────────────────────────────────────────────────── */
+
+.mt-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--mt-line);
+}
+
+.mt-logo {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(150deg, var(--mt-accent), var(--mt-accent-2));
+    color: #06111a;
+    font-weight: 800;
+    font-size: 15px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset, 0 0 18px rgba(52, 226, 180, 0.35);
+}
+
+.mt-wordmark {
+    font-family: var(--mt-mono);
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 13px;
+    color: var(--mt-fg);
+}
+.mt-wordmark .mt-wordmark__accent { color: var(--mt-accent); }
+
+.mt-subtitle {
+    color: var(--mt-fg-mute);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+}
+.mt-titlebar__spacer { margin-left: auto; }
+
+/* Live status dot */
+.mt-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mt-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mt-fg-dim);
+    padding: 4px 10px;
+    border: 1px solid var(--mt-line);
+    border-radius: 999px;
+    background: var(--mt-panel-2);
+}
+.mt-status__dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--mt-ok);
+    /* Opacity-only pulse: compositor-friendly, no per-frame repaint */
+    animation: mt-pulse 2s ease-in-out infinite;
+}
+.mt-status.is-paused { color: var(--mt-warn); }
+.mt-status.is-paused .mt-status__dot { background: var(--mt-warn); animation: none; }
+@keyframes mt-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .mt-status__dot { animation: none; }
+}
+
+/* ── Stat chips ────────────────────────────────────────────────── */
+
+.mt-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+.mt-stat {
+    flex: 1 1 130px;
+    min-width: 120px;
+    background: linear-gradient(180deg, var(--mt-raised), var(--mt-panel-2));
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    padding: 10px 12px;
+}
+.mt-stat__label {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--mt-fg-mute);
+    margin-bottom: 4px;
+}
+.mt-stat__value {
+    font-family: var(--mt-mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--mt-fg);
+    line-height: 1.1;
+}
+.mt-stat__value .mt-unit { font-size: 12px; color: var(--mt-fg-dim); font-weight: 500; margin-left: 3px; }
+.mt-stat--accent .mt-stat__value { color: var(--mt-accent); }
+
+/* ── Toolbar ───────────────────────────────────────────────────── */
+
+.mt-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.mt-search {
+    position: relative;
+    flex: 1 1 240px;
+    min-width: 200px;
+}
+.mt-search__icon {
+    position: absolute;
+    left: 11px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--mt-fg-mute);
+    pointer-events: none;
+    font-size: 13px;
+}
+.mt-app input.mt-search__input {
+    width: 100%;
+    padding: 8px 12px 8px 30px;
+    background: var(--mt-panel-2);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    color: var(--mt-fg);
+    font-family: var(--mt-mono);
+    font-size: 12.5px;
+}
+.mt-app input.mt-search__input::placeholder { color: var(--mt-fg-mute); }
+.mt-app input.mt-search__input:focus {
+    outline: none;
+    border-color: var(--mt-accent);
+    box-shadow: 0 0 0 3px var(--mt-accent-dim);
+}
+
+/* Segmented control (refresh interval) */
+.mt-seg {
+    display: inline-flex;
+    background: var(--mt-panel-2);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    padding: 2px;
+    gap: 2px;
+}
+.mt-seg__btn {
+    border: 0;
+    background: transparent;
+    color: var(--mt-fg-dim);
+    font-family: var(--mt-mono);
+    font-size: 11.5px;
+    padding: 5px 9px;
+    border-radius: 6px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.12s, color 0.12s;
+}
+.mt-seg__btn:hover { color: var(--mt-fg); }
+.mt-seg__btn.is-active {
+    background: var(--mt-accent-dim);
+    color: var(--mt-accent);
+    box-shadow: 0 0 0 1px rgba(52, 226, 180, 0.3) inset;
+}
+.mt-seg__label {
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mt-fg-mute);
+    align-self: center;
+}
+
+/* Buttons */
+.mt-app .mt-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--mt-line-2);
+    background: var(--mt-raised);
+    color: var(--mt-fg);
+    font-family: var(--mt-sans);
+    font-size: 12.5px;
+    padding: 7px 13px;
+    border-radius: var(--mt-radius-sm);
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s, transform 0.05s;
+}
+.mt-app .mt-btn:hover { border-color: var(--mt-accent); }
+.mt-app .mt-btn:active { transform: translateY(1px); }
+.mt-app .mt-btn--accent {
+    background: var(--mt-accent-dim);
+    border-color: rgba(52, 226, 180, 0.4);
+    color: var(--mt-accent);
+}
+.mt-app .mt-btn--danger:hover { border-color: var(--mt-danger); color: var(--mt-danger); }
+
+.mt-count {
+    margin-left: auto;
+    font-family: var(--mt-mono);
+    font-size: 12px;
+    color: var(--mt-fg-dim);
+}
+.mt-count b { color: var(--mt-fg); }
+
+/* ── Data table ────────────────────────────────────────────────── */
+
+.mt-tablewrap {
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    overflow: hidden;
+    background: var(--mt-panel-2);
+}
+.mt-tablescroll { overflow-x: auto; }
+
+table.mt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+table.mt-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--mt-panel);
+    color: var(--mt-fg-mute);
+    text-align: left;
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--mt-line-2);
+    white-space: nowrap;
+    user-select: none;
+}
+table.mt-table thead th.mt-th--sortable { cursor: pointer; }
+table.mt-table thead th.mt-th--sortable:hover { color: var(--mt-fg); }
+table.mt-table thead th.is-sorted { color: var(--mt-accent); }
+.mt-sortcaret { opacity: 0.9; font-size: 9px; margin-left: 3px; }
+
+table.mt-table tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--mt-line);
+    color: var(--mt-fg);
+    white-space: nowrap;
+    vertical-align: middle;
+}
+table.mt-table tbody tr:last-child td { border-bottom: 0; }
+table.mt-table tbody tr { transition: background 0.1s; }
+table.mt-table tbody tr:hover { background: rgba(63, 182, 255, 0.05); }
+
+.mt-num { font-family: var(--mt-mono); text-align: right; }
+.mt-endpoint { font-family: var(--mt-mono); color: var(--mt-fg-dim); }
+.mt-endpoint b { color: var(--mt-fg); font-weight: 600; }
+.mt-proto {
+    font-family: var(--mt-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--mt-fg-dim);
+}
+
+.mt-empty {
+    text-align: center;
+    color: var(--mt-fg-mute);
+    padding: 28px 12px !important;
+    font-style: italic;
+}
+
+/* ── DSCP signal tag ───────────────────────────────────────────── */
+
+.mt-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mt-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 3px 9px 3px 7px;
+    border-radius: 999px;
+    color: var(--sig, var(--mt-fg-dim));
+    border: 1px solid color-mix(in srgb, var(--sig, var(--mt-fg-mute)) 45%, transparent);
+    background: color-mix(in srgb, var(--sig, var(--mt-fg-mute)) 12%, transparent);
+    white-space: nowrap;
+}
+.mt-tag__dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--sig, var(--mt-fg-mute));
+    flex: 0 0 auto;
+}
+.mt-tag__val { color: var(--mt-fg-mute); font-weight: 500; }
+
+/* ── Transfer bar ──────────────────────────────────────────────── */
+
+.mt-xfer { display: flex; align-items: center; gap: 9px; min-width: 130px; }
+.mt-bar {
+    flex: 1 1 auto;
+    height: 6px;
+    min-width: 44px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.mt-bar__fill {
+    height: 100%;
+    border-radius: 999px;
+    /* Flat fill (no blur/transition) — cheap to repaint each poll */
+    background: var(--sig, var(--mt-accent));
+}
+.mt-xfer__val { font-family: var(--mt-mono); text-align: right; min-width: 62px; color: var(--mt-fg); }
+
+/* ── DSCP reference (Rules page) ───────────────────────────────── */
+
+.mt-ref { margin: 4px 0 8px; }
+.mt-ref__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+}
+.mt-ref__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--mt-panel-2);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+}
+.mt-ref__use { color: var(--mt-fg-dim); font-size: 11.5px; line-height: 1.3; }
+.mt-note {
+    color: var(--mt-fg-mute);
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin-top: 10px;
+    padding-left: 10px;
+    border-left: 2px solid var(--mt-line-2);
+}
+
+/* ── Code / examples / validation blocks ──────────────────────── */
+
+.mt-code {
+    background: var(--mt-panel-2);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    padding: 12px 14px;
+    margin: 6px 0;
+    font-family: var(--mt-mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--mt-fg-dim);
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+.mt-callout {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border-radius: var(--mt-radius-sm);
+    font-size: 12px;
+    line-height: 1.5;
+    border: 1px solid var(--mt-line);
+    background: var(--mt-panel-2);
+    color: var(--mt-fg-dim);
+    margin: 8px 0;
+}
+.mt-callout--ok    { border-color: rgba(52, 226, 180, 0.4);  }
+.mt-callout--fail  { border-color: rgba(255, 92, 122, 0.45); }
+.mt-callout__badge {
+    font-family: var(--mt-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 6px;
+    flex: 0 0 auto;
+}
+.mt-callout--ok   .mt-callout__badge { color: var(--mt-ok);     background: var(--mt-accent-dim); }
+.mt-callout--fail .mt-callout__badge { color: var(--mt-danger); background: rgba(255, 92, 122, 0.14); }
+
+/* ── Theming LuCI form widgets inside the panel ───────────────── */
+
+.mt-app h2, .mt-app h3, .mt-app h4 { color: var(--mt-fg); }
+.mt-app .cbi-map-descr,
+.mt-app .cbi-section-descr { color: var(--mt-fg-dim); }
+
+.mt-app .cbi-section,
+.mt-app .cbi-section-node,
+.mt-app fieldset.cbi-section {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+    margin: 0 0 10px;
+}
+
+.mt-app input[type="text"],
+.mt-app input[type="password"],
+.mt-app input[type="number"],
+.mt-app select,
+.mt-app textarea {
+    background: var(--mt-panel-2);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    color: var(--mt-fg);
+    padding: 6px 10px;
+    font-family: var(--mt-sans);
+}
+.mt-app textarea { font-family: var(--mt-mono); font-size: 12px; line-height: 1.5; }
+.mt-app input[type="text"]:focus,
+.mt-app select:focus,
+.mt-app textarea:focus {
+    outline: none;
+    border-color: var(--mt-accent);
+    box-shadow: 0 0 0 3px var(--mt-accent-dim);
+}
+.mt-app input::placeholder, .mt-app textarea::placeholder { color: var(--mt-fg-mute); }
+
+/* GridSection / cbi tables rendered by LuCI forms */
+.mt-app .table,
+.mt-app .cbi-section-table {
+    background: var(--mt-panel-2);
+    border: 1px solid var(--mt-line);
+    border-radius: var(--mt-radius-sm);
+    overflow: hidden;
+}
+.mt-app .table .th,
+.mt-app .cbi-section-table .th,
+.mt-app .table .tr.table-titles .th {
+    background: var(--mt-panel);
+    color: var(--mt-fg-mute);
+    text-transform: uppercase;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--mt-line-2);
+}
+.mt-app .table .td,
+.mt-app .cbi-section-table .td {
+    color: var(--mt-fg);
+    border-bottom: 1px solid var(--mt-line);
+    background: transparent;
+}
+.mt-app .table .tr:hover,
+.mt-app .cbi-section-table .cbi-section-table-row:hover { background: rgba(63, 182, 255, 0.05); }
+
+/* LuCI buttons inside panel — keep native buttons legible on dark */
+.mt-app .cbi-button,
+.mt-app .btn {
+    border-radius: var(--mt-radius-sm);
+    border: 1px solid var(--mt-line-2);
+    background: var(--mt-raised);
+    color: var(--mt-fg);
+}
+.mt-app .cbi-button:hover, .mt-app .btn:hover { border-color: var(--mt-accent); }
+.mt-app .cbi-button-add,
+.mt-app .cbi-button-save,
+.mt-app .cbi-button-apply,
+.mt-app .cbi-button-positive {
+    background: var(--mt-accent-dim);
+    border-color: rgba(52, 226, 180, 0.4);
+    color: var(--mt-accent);
+}
+.mt-app .cbi-button-remove,
+.mt-app .cbi-button-negative { color: var(--mt-danger); border-color: rgba(255, 92, 122, 0.4); }
+
+/* Activity counter cell (Rules page live counters) */
+.mt-activity { font-family: var(--mt-mono); font-size: 11.5px; }
+.mt-activity__on  { color: var(--mt-accent); }
+.mt-activity__off { color: var(--mt-fg-mute); }
+.mt-activity .mt-activity__pkts { color: var(--mt-fg); }
+
+/* ── DSCP signal hues (drive --sig for tags, bars, dots) ───────── */
+
+.mt-sig--ef     { --sig: #ff5c7a; } /* EF        — voice / realtime   */
+.mt-sig--cs5    { --sig: #ff9f45; } /* CS5       — signaling          */
+.mt-sig--hi     { --sig: #ffd24d; } /* CS4, AF4x — interactive/video  */
+.mt-sig--stream { --sig: #57e39b; } /* CS3, AF3x — streaming          */
+.mt-sig--data   { --sig: #3fd0e0; } /* CS2, AF2x — high-throughput    */
+.mt-sig--afl    { --sig: #6ea8ff; } /* AF1x      — low-priority data   */
+.mt-sig--ctrl   { --sig: #c08cff; } /* CS6, CS7  — network control     */
+.mt-sig--cs1    { --sig: #8891a5; } /* CS1       — background / bulk    */
+.mt-sig--cs0    { --sig: #5b6675; } /* CS0       — best effort          */
+
+/* ── Responsive ────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+    .mt-app { padding: 14px 12px 16px; }
+    .mt-count { margin-left: 0; width: 100%; }
+    .mt-stat { flex-basis: calc(50% - 5px); }
+}
+
+/*
+ * Fallback for engines without color-mix() (older WebKit on some
+ * OpenWrt builds): tags/bars still render, just with flat fills.
+ */
+@supports not (background: color-mix(in srgb, red 50%, white)) {
+    .mt-tag { background: rgba(255, 255, 255, 0.06); border-color: var(--mt-line-2); }
+    .mt-bar__fill { background: var(--sig, var(--mt-accent)); }
+}

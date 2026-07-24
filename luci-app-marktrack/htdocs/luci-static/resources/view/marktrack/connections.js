@@ -21,6 +21,21 @@ function dscpLabel(dscp) {
     return DSCP_MAP[dscp & 0x3F] || String(dscp);
 }
 
+// Map a DSCP label to a signal-hue token (see .mt-sig--* in marktrack.css)
+function dscpToken(label) {
+    switch ((label || '').toUpperCase()) {
+        case 'EF':   return 'ef';
+        case 'CS5':  return 'cs5';
+        case 'CS4': case 'AF41': case 'AF42': case 'AF43': return 'hi';
+        case 'CS3': case 'AF31': case 'AF32': case 'AF33': return 'stream';
+        case 'CS2': case 'AF21': case 'AF22': case 'AF23': return 'data';
+        case 'AF11': case 'AF12': case 'AF13': return 'afl';
+        case 'CS6': case 'CS7': return 'ctrl';
+        case 'CS1':  return 'cs1';
+        default:     return 'cs0';
+    }
+}
+
 function formatSize(bytes) {
     bytes = bytes || 0;
     if (bytes === 0) return '0 B';
@@ -33,13 +48,32 @@ function formatRate(bytesPerSec) {
     return (bytesPerSec * 8 / 1000).toFixed(1) + ' Kbit/s';
 }
 
-// Polling intervals offered in the dropdown (seconds)
+// Aggregate throughput → { v: value, u: unit } for the stat chip
+function formatThroughput(bytesPerSec) {
+    var bits = (bytesPerSec || 0) * 8;
+    var u = ['bit/s', 'Kbit/s', 'Mbit/s', 'Gbit/s'], i = 0;
+    while (bits >= 1000 && i < u.length - 1) { bits /= 1000; i++; }
+    return { v: (i === 0 ? Math.round(bits) : (Math.round(bits * 10) / 10)).toString(), u: u[i] };
+}
+
+// Inject the shared design system once
+function injectCss() {
+    if (document.getElementById('marktrack-theme')) return;
+    document.head.appendChild(E('link', {
+        'id': 'marktrack-theme',
+        'rel': 'stylesheet',
+        'type': 'text/css',
+        'href': L.resource('marktrack/marktrack.css')
+    }));
+}
+
+// Polling intervals offered in the segmented control (seconds)
 var POLL_OPTIONS = [
-    [1,  '1 s'],
-    [3,  '3 s'],
-    [10, '10 s'],
-    [30, '30 s'],
-    [60, '1 min']
+    [1,  '1s'],
+    [3,  '3s'],
+    [10, '10s'],
+    [30, '30s'],
+    [60, '1m']
 ];
 
 return view.extend({
@@ -138,37 +172,85 @@ return view.extend({
         });
     },
 
+    // Build one endpoint cell: bold host, dim :port, all monospace
+    endpointCell: function(host, port) {
+        var kids = [ E('b', {}, host) ];
+        if (port && port !== '-') kids.push(':' + port);
+        return E('td', { 'class': 'td' }, E('span', { 'class': 'mt-endpoint' }, kids));
+    },
+
     // Rebuild all rows into a fragment, then swap once (single reflow = smooth)
     updateTable: function() {
         if (!this.tbody) return;
 
         var rows = this.sortRows(this.connections.filter(this.matchesFilter, this));
-        var frag = document.createDocumentFragment();
 
+        // Aggregates for stat chips + transfer-bar scaling
+        var maxBytes = 1, totalBps = 0, marked = 0, classCount = {};
+        for (var j = 0; j < rows.length; j++) {
+            var r = rows[j];
+            if (r.bytes > maxBytes) maxBytes = r.bytes;
+            totalBps += r._bps || 0;
+            if ((r.mark & 128) === 128) marked++;
+            var lbl = dscpLabel(r.dscp);
+            classCount[lbl] = (classCount[lbl] || 0) + 1;
+        }
+
+        var frag = document.createDocumentFragment();
         for (var i = 0; i < rows.length; i++) {
             var c = rows[i];
-            frag.appendChild(E('tr', { 'class': 'tr' }, [
-                E('td', { 'class': 'td' }, (c.protocol || '').toUpperCase()),
-                E('td', { 'class': 'td' }, c.src + (c.sport !== '-' ? ':' + c.sport : '')),
-                E('td', { 'class': 'td' }, c.dst + (c.dport !== '-' ? ':' + c.dport : '')),
-                E('td', { 'class': 'td' }, dscpLabel(c.dscp)),
-                E('td', { 'class': 'td' }, formatSize(c.bytes)),
-                E('td', { 'class': 'td' }, String(c.packets)),
-                E('td', { 'class': 'td' }, String(c._pps)),
-                E('td', { 'class': 'td' }, formatRate(c._bps))
+            var label = dscpLabel(c.dscp);
+            var token = dscpToken(label);
+            var pct = Math.max(3, Math.round(c.bytes / maxBytes * 100));
+
+            frag.appendChild(E('tr', { 'class': 'mt-sig--' + token }, [
+                E('td', { 'class': 'td' }, E('span', { 'class': 'mt-proto' }, (c.protocol || '').toUpperCase())),
+                this.endpointCell(c.src, c.sport),
+                this.endpointCell(c.dst, c.dport),
+                E('td', { 'class': 'td' }, E('span', { 'class': 'mt-tag' }, [
+                    E('span', { 'class': 'mt-tag__dot' }),
+                    label,
+                    E('span', { 'class': 'mt-tag__val' }, String(c.dscp & 0x3F))
+                ])),
+                E('td', { 'class': 'td' }, E('div', { 'class': 'mt-xfer' }, [
+                    E('div', { 'class': 'mt-bar' }, E('div', { 'class': 'mt-bar__fill', 'style': 'width:' + pct + '%' })),
+                    E('span', { 'class': 'mt-xfer__val' }, formatSize(c.bytes))
+                ])),
+                E('td', { 'class': 'td mt-num' }, String(c.packets)),
+                E('td', { 'class': 'td mt-num' }, String(c._pps)),
+                E('td', { 'class': 'td mt-num' }, formatRate(c._bps))
             ]));
         }
 
         if (!rows.length)
-            frag.appendChild(E('tr', { 'class': 'tr' }, [
-                E('td', { 'class': 'td', 'colspan': '8', 'style': 'text-align:center; padding:1em;' },
-                    _('No active connections'))
+            frag.appendChild(E('tr', {}, [
+                E('td', { 'class': 'td mt-empty', 'colspan': '8' },
+                    this.filter ? _('No connections match the filter') : _('No active connections'))
             ]));
 
         this.tbody.replaceChildren(frag);
+        this.updateStats(rows.length, totalBps, marked, classCount);
+    },
 
-        var count = this.container ? this.container.querySelector('.mt-count') : null;
-        if (count) count.textContent = _('Connections: %d').format(rows.length);
+    updateStats: function(flows, totalBps, marked, classCount) {
+        if (this.elFlows) this.elFlows.textContent = String(flows);
+
+        if (this.elThroughput) {
+            var t = formatThroughput(totalBps);
+            this.elThroughput.replaceChildren(t.v, E('span', { 'class': 'mt-unit' }, t.u));
+        }
+
+        if (this.elMarked) this.elMarked.textContent = String(marked);
+
+        if (this.elTop) {
+            var top = '—', best = -1;
+            for (var k in classCount)
+                if (classCount[k] > best) { best = classCount[k]; top = k; }
+            this.elTop.textContent = top;
+        }
+
+        if (this.elCount)
+            this.elCount.replaceChildren(E('b', {}, String(flows)), ' ' + _('flows'));
     },
 
     poll: function() {
@@ -193,84 +275,131 @@ return view.extend({
         }, view.pollInterval * 1000);
     },
 
-    makeHeader: function(col, label) {
+    setStatus: function() {
+        if (!this.elStatus) return;
+        this.elStatus.classList.toggle('is-paused', this.paused);
+        this.elStatusText.textContent = this.paused
+            ? _('Paused')
+            : _('Live · %ss').format(this.pollInterval);
+    },
+
+    // ── Column header with sort affordance ─────────────────────────
+    makeHeader: function(col, label, numeric) {
         var view = this;
-        var ind = (view.sortColumn === col) ? (view.sortDescending ? ' ▼' : ' ▲') : '';
-        return E('th', { 'class': 'th' },
-            E('a', {
-                'href': '#',
-                'click': function(ev) {
-                    ev.preventDefault();
-                    if (view.sortColumn === col) view.sortDescending = !view.sortDescending;
-                    else { view.sortColumn = col; view.sortDescending = true; }
-                    view.rebuildHeader();
-                    view.updateTable();
-                }
-            }, label + ind));
+        var sorted = (view.sortColumn === col);
+        var caret = sorted ? E('span', { 'class': 'mt-sortcaret' }, view.sortDescending ? '▼' : '▲') : '';
+        return E('th', {
+            'class': 'mt-th--sortable' + (sorted ? ' is-sorted' : '') + (numeric ? ' mt-num' : ''),
+            'click': function() {
+                if (view.sortColumn === col) view.sortDescending = !view.sortDescending;
+                else { view.sortColumn = col; view.sortDescending = true; }
+                view.rebuildHeader();
+                view.updateTable();
+            }
+        }, [ label, caret ]);
     },
 
     rebuildHeader: function() {
         if (!this.thead) return;
         var cols = [
-            ['protocol', _('Protocol')], ['src', _('Source')], ['dst', _('Destination')],
-            ['dscp', _('DSCP')], ['bytes', _('Transfer')], ['packets', _('Packets')],
-            ['pps', _('Avg PPS')], ['bps', _('Avg BPS')]
+            ['protocol', _('Proto'), 0], ['src', _('Source'), 0], ['dst', _('Destination'), 0],
+            ['dscp', _('DSCP'), 0], ['bytes', _('Transfer'), 0], ['packets', _('Packets'), 1],
+            ['pps', _('Avg PPS'), 1], ['bps', _('Avg BPS'), 1]
         ];
         var view = this;
-        this.thead.replaceChildren(E('tr', { 'class': 'tr table-titles' },
-            cols.map(function(c) { return view.makeHeader(c[0], c[1]); })));
+        this.thead.replaceChildren(E('tr', {},
+            cols.map(function(c) { return view.makeHeader(c[0], c[1], c[2]); })));
+    },
+
+    // ── Stat chip factory ──────────────────────────────────────────
+    statChip: function(label, refName, accent) {
+        var value = E('div', { 'class': 'mt-stat__value' }, '—');
+        this[refName] = value;
+        return E('div', { 'class': 'mt-stat' + (accent ? ' mt-stat--accent' : '') }, [
+            E('div', { 'class': 'mt-stat__label' }, label),
+            value
+        ]);
     },
 
     render: function(data) {
         var view = this;
+        injectCss();
         view.processData(data);
 
-        var filterInput = E('input', {
-            'type': 'text',
-            'placeholder': _('Filter: IP, port, protocol or DSCP'),
-            'style': 'width:260px;',
-            'value': view.filter,
-            'input': function(ev) { view.filter = ev.target.value.toLowerCase(); view.updateTable(); }
-        });
-
-        var intervalSelect = E('select', {
-            'style': 'margin-left:6px;',
-            'change': function(ev) {
-                view.pollInterval = parseInt(ev.target.value) || 3;
-                view.schedule();
-            }
-        }, POLL_OPTIONS.map(function(o) {
-            return E('option', { 'value': o[0] }, o[1]);
-        }));
-        intervalSelect.value = String(view.pollInterval);
-
-        var pauseBtn = E('button', {
-            'class': 'btn',
-            'style': 'margin-left:6px;',
-            'click': function() {
-                view.paused = !view.paused;
-                this.textContent = view.paused ? _('Resume') : _('Pause');
-                if (!view.paused) view.poll();
-            }
-        }, _('Pause'));
-
-        this.thead = E('thead', {});
-        this.tbody = E('tbody', {});
-        var table = E('table', { 'class': 'table cbi-section-table', 'id': 'marktrack_connections' },
-            [ this.thead, this.tbody ]);
-
-        this.container = E('div', { 'class': 'cbi-map' }, [
-            E('h2', _('Connections')),
-            E('div', { 'class': 'cbi-section', 'style': 'display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:10px;' }, [
-                filterInput,
-                E('span', { 'style': 'margin-left:6px;' }, _('Refresh:')),
-                intervalSelect,
-                pauseBtn,
-                E('span', { 'class': 'mt-count', 'style': 'margin-left:auto; font-weight:bold;' }, _('Connections: %d').format(0))
+        // Title bar
+        this.elStatusText = E('span', {}, '');
+        this.elStatus = E('span', { 'class': 'mt-status' }, [
+            E('span', { 'class': 'mt-status__dot' }), this.elStatusText
+        ]);
+        var titlebar = E('div', { 'class': 'mt-titlebar' }, [
+            E('span', { 'class': 'mt-logo' }, 'M'),
+            E('div', {}, [
+                E('div', { 'class': 'mt-wordmark' }, [ 'MARK', E('span', { 'class': 'mt-wordmark__accent' }, 'TRACK') ]),
+                E('div', { 'class': 'mt-subtitle' }, _('Live Connections'))
             ]),
-            E('div', { 'class': 'cbi-section' }, [ table ])
+            E('span', { 'class': 'mt-titlebar__spacer' }),
+            this.elStatus
         ]);
 
+        // Stat chips
+        var stats = E('div', { 'class': 'mt-stats' }, [
+            this.statChip(_('Active flows'), 'elFlows', true),
+            this.statChip(_('Throughput'), 'elThroughput', false),
+            this.statChip(_('Marked'), 'elMarked', false),
+            this.statChip(_('Top class'), 'elTop', false)
+        ]);
+
+        // Toolbar: search + segmented refresh + pause + count
+        var search = E('div', { 'class': 'mt-search' }, [
+            E('span', { 'class': 'mt-search__icon' }, '⌕'),
+            E('input', {
+                'type': 'text',
+                'class': 'mt-search__input',
+                'placeholder': _('Filter by IP, port, protocol or DSCP…'),
+                'value': view.filter,
+                'input': function(ev) { view.filter = ev.target.value.toLowerCase(); view.updateTable(); }
+            })
+        ]);
+
+        var segBtns = POLL_OPTIONS.map(function(o) {
+            return E('button', {
+                'class': 'mt-seg__btn' + (o[0] === view.pollInterval ? ' is-active' : ''),
+                'data-int': o[0],
+                'click': function(ev) {
+                    view.pollInterval = o[0];
+                    seg.querySelectorAll('.mt-seg__btn').forEach(function(b) {
+                        b.classList.toggle('is-active', parseInt(b.getAttribute('data-int')) === view.pollInterval);
+                    });
+                    view.setStatus();
+                    view.schedule();
+                }
+            }, o[1]);
+        });
+        var seg = E('div', { 'class': 'mt-seg' }, [ E('span', { 'class': 'mt-seg__label' }, _('Refresh')) ].concat(segBtns));
+
+        var pauseBtn = E('button', {
+            'class': 'mt-btn',
+            'click': function() {
+                view.paused = !view.paused;
+                this.textContent = view.paused ? '▶ ' + _('Resume') : '⏸ ' + _('Pause');
+                view.setStatus();
+                if (!view.paused) view.poll();
+            }
+        }, '⏸ ' + _('Pause'));
+
+        this.elCount = E('span', { 'class': 'mt-count' }, [ E('b', {}, '0'), ' ' + _('flows') ]);
+
+        var toolbar = E('div', { 'class': 'mt-toolbar' }, [ search, seg, pauseBtn, this.elCount ]);
+
+        // Table
+        this.thead = E('thead', {});
+        this.tbody = E('tbody', {});
+        var table = E('table', { 'class': 'mt-table', 'id': 'marktrack_connections' }, [ this.thead, this.tbody ]);
+        var tableWrap = E('div', { 'class': 'mt-tablewrap' }, E('div', { 'class': 'mt-tablescroll' }, table));
+
+        this.container = E('div', { 'class': 'mt-app' }, [ titlebar, stats, toolbar, tableWrap ]);
+
+        this.setStatus();
         this.rebuildHeader();
         this.updateTable();
         this.schedule();

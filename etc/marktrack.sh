@@ -67,78 +67,11 @@ debug_log() {
 }
 
 ##############################
-# IP Set generation
-##############################
-
-# Iterates over UCI 'ipset' sections and emits nftables set declarations
-create_nft_sets() {
-    local sets_created=""
-
-    # shellcheck disable=SC2329
-    create_set() {
-        local section="$1" name ip_list mode timeout set_flags family
-
-        config_get name    "$section" name
-        local enabled=1
-        config_get_bool enabled "$section" enabled 1
-        [ "$enabled" -eq 0 ] && return 0
-
-        config_get mode    "$section" mode    "static"
-        config_get timeout "$section" timeout "1h"
-        config_get family  "$section" family  "ipv4"
-
-        if [ "$family" = "ipv6" ]; then
-            config_get ip_list "$section" ip6
-            echo "$name ipv6" >> /tmp/marktrack_set_families
-        else
-            config_get ip_list "$section" ip4
-            echo "$name ipv4" >> /tmp/marktrack_set_families
-        fi
-
-        if [ "$mode" = "dynamic" ]; then
-            set_flags="dynamic, timeout"
-            if [ "$family" = "ipv6" ]; then
-                debug_log "Creating dynamic IPv6 set: $name"
-                echo "    set $name { type ipv6_addr; flags $set_flags; timeout $timeout; }"
-            else
-                debug_log "Creating dynamic IPv4 set: $name"
-                echo "    set $name { type ipv4_addr; flags $set_flags; timeout $timeout; }"
-            fi
-        else
-            set_flags="interval"
-            if [ -n "$ip_list" ]; then
-                if [ "$family" = "ipv6" ]; then
-                    debug_log "Creating static IPv6 set: $name"
-                    echo "    set $name { type ipv6_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
-                else
-                    debug_log "Creating static IPv4 set: $name"
-                    echo "    set $name { type ipv4_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
-                fi
-            else
-                if [ "$family" = "ipv6" ]; then
-                    debug_log "Creating empty static IPv6 set: $name"
-                    echo "    set $name { type ipv6_addr; flags $set_flags; }"
-                else
-                    debug_log "Creating empty static IPv4 set: $name"
-                    echo "    set $name { type ipv4_addr; flags $set_flags; }"
-                fi
-            fi
-        fi
-        sets_created="$sets_created $name"
-    }
-
-    rm -f /tmp/marktrack_set_families
-    config_foreach create_set ipset
-    export MARKTRACK_SETS="$sets_created"
-    [ -n "$sets_created" ] && debug_log "Created sets: $sets_created"
-}
-
-##############################
 # DSCP Rule generation
 ##############################
 
 # Generates a single nftables DSCP marking rule from a UCI 'rule' section.
-# Handles IPv4, IPv6, mixed addresses, set references, negation, port ranges.
+# Handles IPv4, IPv6, mixed addresses, negation, port ranges.
 # shellcheck disable=SC2329
 create_nft_rule() {
     # Trim leading/trailing whitespace in variable $1
@@ -148,11 +81,6 @@ create_nft_rule() {
         tr_out="${tr_in%"${tr_in##*[! 	]}"}"
         tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
         eval "$1=\"\${tr_out}\""
-    }
-
-    is_set_ref() {
-        case "$1" in "@"*) return 0; esac
-        return 1
     }
 
     # Checks whether a string is an IPv6 suffix mask (::suffix/::mask)
@@ -195,16 +123,9 @@ create_nft_rule() {
         return 1
     fi
 
-    # Helper: look up set family from temp file written by create_nft_sets
-    get_set_family() {
-        local setname="$1"
-        [ -f /tmp/marktrack_set_families ] && \
-            awk -v set="$setname" '$1 == set {print $2}' /tmp/marktrack_set_families
-    }
-
     # Separates a space-separated list of IPs into IPv4 and IPv6 buckets
     separate_ips_by_family() {
-        local ips="$3" ip prefix setname ipv4_result="" ipv6_result=""
+        local ips="$3" ip prefix ipv4_result="" ipv6_result=""
 
         for ip in $ips; do
             prefix=""
@@ -213,14 +134,7 @@ create_nft_rule() {
                 ip="${ip#"!="}"
             esac
 
-            if is_set_ref "$ip"; then
-                setname="${ip#"@"}"
-                if [ "$(get_set_family "$setname")" = "ipv6" ]; then
-                    ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${ip}"
-                else
-                    ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${ip}"
-                fi
-            elif is_ipv6_mask "$ip"; then
+            if is_ipv6_mask "$ip"; then
                 ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${ip}"
             elif is_ipv6 "$ip"; then
                 ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${ip}"
@@ -270,14 +184,14 @@ create_nft_rule() {
             :
         }
 
-        local value setname family suffix mask comp_op negation \
+        local value suffix mask comp_op negation \
             result='' res_set_neg='' res_set_pos='' \
-            has_ipv4='' has_ipv6='' set_ref_seen='' ipv6_mask_seen='' reg_val_seen='' \
+            has_ipv4='' has_ipv6='' ipv6_mask_seen='' reg_val_seen='' \
             values="$1" prefix="$2"
 
         for value in $values; do
-            if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
-                error_out "invalid entry '$values'. Set reference or IPv6 mask must be alone."
+            if [ -n "$ipv6_mask_seen" ]; then
+                error_out "invalid entry '$values'. IPv6 mask must be alone."
                 return 1
             fi
 
@@ -288,20 +202,6 @@ create_nft_rule() {
                 comp_op="!="
                 value="${value#"!="}"
             esac
-
-            if is_set_ref "$value"; then
-                [ -n "$reg_val_seen" ] && {
-                    error_out "invalid entry '$values'. Set reference must be alone."
-                    return 1
-                }
-                set_ref_seen=1
-                setname="${value#@}"
-                family="$(get_set_family "$setname")"
-                debug_log "Set $setname has family: $family"
-                [ "$family" = "ipv6" ] && prefix="${prefix//ip /ip6 }"
-                result="${prefix}${negation} @${setname}"
-                continue
-            fi
 
             if is_ipv6_mask "$value"; then
                 [ -n "$reg_val_seen" ] && {
@@ -339,7 +239,7 @@ create_nft_rule() {
             reg_val_seen=1
         done
 
-        if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
+        if [ -n "$ipv6_mask_seen" ]; then
             printf '%s\n' "$result"
             return 0
         fi
@@ -487,7 +387,6 @@ fi
 # Generate sets and rules
 ##############################
 
-SETS=$(create_nft_sets)
 DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 
 ##############################
@@ -509,8 +408,6 @@ table inet marktrack
 delete table inet marktrack
 
 table inet marktrack {
-
-${SETS}
 
     chain marktrack {
         type filter hook ${NFT_HOOK} priority ${NFT_PRIORITY}; policy accept;
